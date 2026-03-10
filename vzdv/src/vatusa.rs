@@ -257,7 +257,7 @@ pub async fn get_training_records(cid: u32, api_key: &str) -> Result<Vec<Trainin
         .await?;
     if !resp.status().is_success() {
         bail!(
-            "Got status {} from VATUSA training records API",
+            "Got status {} from VATUSA training records API for {cid}",
             resp.status().as_u16()
         );
     }

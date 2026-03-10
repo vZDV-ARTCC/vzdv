@@ -804,7 +804,7 @@ async fn page_visitor_application_form_submit(
             .send()
             .await;
         if let Err(e) = res {
-            error!(":Could not send info to new visitor app webhook: {e}");
+            error!("Could not send info to new visitor app webhook: {e}");
         }
     });
     Ok(Redirect::to("/facility/visitor_application"))
