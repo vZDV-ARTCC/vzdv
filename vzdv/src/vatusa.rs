@@ -151,7 +151,7 @@ pub async fn transfer_checklist(cid: u32, api_key: &str) -> Result<TransferCheck
         .await?;
     if !resp.status().is_success() {
         bail!(
-            "Got status {} from VATUSA transfer checklist API",
+            "Got status {} from VATUSA transfer checklist API for {cid}",
             resp.status().as_u16()
         );
     }
@@ -176,7 +176,7 @@ pub async fn get_controller_info(cid: u32, api_key: Option<&str>) -> Result<Rost
     if !resp.status().is_success() {
         bail!(
             // not including the URL since it may have the API key in it
-            "Got status {} from VATUSA controller info API",
+            "Got status {} from VATUSA controller info API for {cid}",
             resp.status().as_u16()
         );
     }
@@ -224,7 +224,7 @@ pub async fn add_visiting_controller(cid: u32, api_key: &str) -> Result<()> {
         .await?;
     if !resp.status().is_success() {
         bail!(
-            "Got status {} from VATUSA API to add a visiting controller",
+            "Got status {} from VATUSA API to add a visiting controller {cid}",
             resp.status().as_u16()
         );
     }
@@ -306,7 +306,7 @@ pub async fn save_training_record(api_key: &str, cid: u32, data: &NewTrainingRec
         .await?;
     if !resp.status().is_success() {
         bail!(
-            "Got status {} from VATUSA training record submit API",
+            "Got status {} from VATUSA training record submit API for {cid}",
             resp.status().as_u16()
         );
     }
@@ -323,7 +323,7 @@ pub async fn remove_home_controller(cid: u32, by: &str, reason: &str, api_key: &
         .await?;
     if !resp.status().is_success() {
         bail!(
-            "Got status {} from VATUSA home controller removal API",
+            "Got status {} from VATUSA home controller removal API for {cid}",
             resp.status().as_u16()
         );
     }
@@ -342,7 +342,7 @@ pub async fn remove_visiting_controller(cid: u32, reason: &str, api_key: &str) -
         .await?;
     if !resp.status().is_success() {
         bail!(
-            "Got status {} from VATUSA visiting controller removal API",
+            "Got status {} from VATUSA visiting controller removal API for {cid}",
             resp.status().as_u16()
         );
     }
@@ -377,7 +377,7 @@ pub async fn get_controller_rating_history(cid: u32, api_key: &str) -> Result<Ve
         .await?;
     if !resp.status().is_success() {
         bail!(
-            "Got status {} from VATUSA controller rating history API",
+            "Got status {} from VATUSA controller rating history API for {cid}",
             resp.status().as_u16()
         );
     }
@@ -436,7 +436,7 @@ pub async fn report_solo_cert(
         .await?;
     if !resp.status().is_success() {
         bail!(
-            "Got status {} from VATUSA solo certification create API",
+            "Got status {} from VATUSA solo certification create API for {cid}",
             resp.status().as_u16()
         );
     }
@@ -454,7 +454,7 @@ pub async fn delete_solo_cert(cid: u32, position: &str, api_key: &str) -> Result
         .await?;
     if !resp.status().is_success() {
         bail!(
-            "Got status {} from VATUSA solo certification delete API",
+            "Got status {} from VATUSA solo certification delete API for {cid}",
             resp.status().as_u16()
         );
     }
