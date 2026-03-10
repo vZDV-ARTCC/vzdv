@@ -116,7 +116,7 @@ pub struct TransferChecklist {
     pub controlled_50_hrs: bool,
     #[serde(rename = "override")]
     pub has_override: bool,
-    pub is_first: bool,
+    pub is_first: u8,
     pub days: u32,
     #[serde(rename = "visitingDays")]
     pub visiting_days: Option<u32>,
