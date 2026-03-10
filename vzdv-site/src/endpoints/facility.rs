@@ -714,26 +714,6 @@ async fn page_visitor_application_form(
         }
     };
 
-    /*
-     * ZLC bypass
-     *
-     * Any ZLC home controller at S1+ can visit without meeting
-     * the other VATSIM/VATUSA visiting controller requirements.
-     */
-    if pending_request.is_none() {
-        let home_facility = controller_info.facility.clone();
-        let rating = controller_info.rating;
-        if home_facility == "ZLC" && rating >= ControllerRating::S1.as_id() {
-            // ZLC bypass conditions met
-            info!("{} getting ZLC bypass form", user_info.cid);
-            let template = state
-                .templates
-                .get_template("facility/visitor_application_form_zlc.jinja")?;
-            let rendered = template.render(context! { user_info, controller_info })?;
-            return Ok(Html(rendered));
-        }
-    }
-
     // check VATUSA checklist
     let checklist = match vatusa::transfer_checklist(
         user_info.cid,
@@ -769,7 +749,6 @@ async fn page_visitor_application_form(
 struct VisitorApplicationForm {
     rating: u8,
     facility: String,
-    zlc_bypass: Option<bool>,
 }
 
 /// Submit the request to join as a visitor.
@@ -791,19 +770,6 @@ async fn page_visitor_application_form_submit(
             return Ok(Redirect::to("/"));
         }
     };
-
-    // ZLC bypass
-    if application_form.zlc_bypass.is_some() {
-        record_log(
-            format!(
-                "Controller {} is using ZLC visitor requirements bypass",
-                user_info.cid
-            ),
-            &state.db,
-            true,
-        )
-        .await?;
-    }
 
     sqlx::query(sql::INSERT_INTO_VISITOR_REQ)
         .bind(user_info.cid)

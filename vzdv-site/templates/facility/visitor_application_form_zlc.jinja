@@ -1,9 +1,0 @@
-<div class="pt-5">
-  <p>Hello ZLC home controller! Click the button below to submit the request.</p>
-  <form action="/facility/visitor_application/form" method="POST">
-    <input type="hidden" name="rating" value="{{ controller_info.rating }}">
-    <input type="hidden" name="facility" value="{{ controller_info.facility }}">
-    <input type="hidden" name="zlc_bypass" value="true">
-    <button type="submit" class="btn btn-primary">Request visitor status</button>
-  </form>
-</div>
