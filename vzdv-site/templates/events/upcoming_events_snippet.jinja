@@ -6,6 +6,7 @@
       <h4 class="mb-1">
         <a href="/events/{{ event.id }}" class="icon-link icon-link-hover text-decoration-none">
           {{ event.name }}
+          {% if event.published %}{% else %}(unpublished){% endif %}
           <i class="bi bi-arrow-right-short"></i>
         </a>
       </h4>
