@@ -1,12 +1,21 @@
 use crate::GENERAL_HTTP_CLIENT;
-use anyhow::{Result, bail};
+use anyhow::Result;
 use chrono::{DateTime, NaiveDateTime, Utc};
+use log::warn;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use tokio::task::JoinSet;
 
 const BASE_URL: &str = "https://api.vatusa.net/";
+
+#[derive(Debug, thiserror::Error, Clone)]
+pub enum VatusaError {
+    #[error("A {0} error was returned by the VATUSA {1} API: {2}")]
+    Reason(u16, &'static str, String),
+    #[error("A {0} unknown error was returned by the VATUSA {1} API")]
+    Unknown(u16, &'static str),
+}
 
 pub enum MembershipType {
     Home,
@@ -91,11 +100,7 @@ pub async fn get_roster(facility: &str, membership: MembershipType) -> Result<Ve
         .send()
         .await?;
     if !resp.status().is_success() {
-        bail!(
-            "Got status {} from VATUSA roster API at {}",
-            resp.status().as_u16(),
-            resp.url()
-        );
+        return Err(VatusaError::Unknown(resp.status().as_u16(), "roster").into());
     }
     let data: Wrapper = resp.json().await?;
     Ok(data.data)
@@ -150,10 +155,8 @@ pub async fn transfer_checklist(cid: u32, api_key: &str) -> Result<TransferCheck
         .send()
         .await?;
     if !resp.status().is_success() {
-        bail!(
-            "Got status {} from VATUSA transfer checklist API for {cid}",
-            resp.status().as_u16()
-        );
+        warn!("Transfer checklist error for {cid}");
+        return Err(VatusaError::Unknown(resp.status().as_u16(), "transfer checklist").into());
     }
     let data: Wrapper = resp.json().await?;
     Ok(data.data)
@@ -174,11 +177,7 @@ pub async fn get_controller_info(cid: u32, api_key: Option<&str>) -> Result<Rost
     }
     let resp = req.send().await?;
     if !resp.status().is_success() {
-        bail!(
-            // not including the URL since it may have the API key in it
-            "Got status {} from VATUSA controller info API for {cid}",
-            resp.status().as_u16()
-        );
+        return Err(VatusaError::Unknown(resp.status().as_u16(), "controller info").into());
     }
     let data: Wrapper = resp.json().await?;
     Ok(data.data)
@@ -223,10 +222,7 @@ pub async fn add_visiting_controller(cid: u32, api_key: &str) -> Result<()> {
         .send()
         .await?;
     if !resp.status().is_success() {
-        bail!(
-            "Got status {} from VATUSA API to add a visiting controller {cid}",
-            resp.status().as_u16()
-        );
+        return Err(VatusaError::Unknown(resp.status().as_u16(), "visitor add").into());
     }
     Ok(())
 }
@@ -256,10 +252,7 @@ pub async fn get_training_records(cid: u32, api_key: &str) -> Result<Vec<Trainin
         .send()
         .await?;
     if !resp.status().is_success() {
-        bail!(
-            "Got status {} from VATUSA training records API for {cid}",
-            resp.status().as_u16()
-        );
+        return Err(VatusaError::Unknown(resp.status().as_u16(), "get training records").into());
     }
     let data: Wrapper = resp.json().await?;
     Ok(data.data)
@@ -289,6 +282,17 @@ pub struct NewTrainingRecord {
     pub notes: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ErrorRespData {
+    #[serde(rename = "msg")]
+    pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ErrorResp {
+    pub data: ErrorRespData,
+}
+
 /// Add a new training record to the controller's VATUSA record.
 pub async fn save_training_record(api_key: &str, cid: u32, data: &NewTrainingRecord) -> Result<()> {
     let resp = GENERAL_HTTP_CLIENT
@@ -305,10 +309,13 @@ pub async fn save_training_record(api_key: &str, cid: u32, data: &NewTrainingRec
         .send()
         .await?;
     if !resp.status().is_success() {
-        bail!(
-            "Got status {} from VATUSA training record submit API for {cid}",
-            resp.status().as_u16()
-        );
+        let status = resp.status().as_u16();
+        let reason = if let Ok(error_body) = resp.json::<ErrorResp>().await {
+            error_body.data.message
+        } else {
+            "unknown".to_string()
+        };
+        return Err(VatusaError::Reason(status, "training record submission", reason).into());
     }
     Ok(())
 }
@@ -322,10 +329,7 @@ pub async fn remove_home_controller(cid: u32, by: &str, reason: &str, api_key: &
         .send()
         .await?;
     if !resp.status().is_success() {
-        bail!(
-            "Got status {} from VATUSA home controller removal API for {cid}",
-            resp.status().as_u16()
-        );
+        return Err(VatusaError::Unknown(resp.status().as_u16(), "home controller removal").into());
     }
     Ok(())
 }
@@ -341,9 +345,8 @@ pub async fn remove_visiting_controller(cid: u32, reason: &str, api_key: &str) -
         .send()
         .await?;
     if !resp.status().is_success() {
-        bail!(
-            "Got status {} from VATUSA visiting controller removal API for {cid}",
-            resp.status().as_u16()
+        return Err(
+            VatusaError::Unknown(resp.status().as_u16(), "visiting controller removal").into(),
         );
     }
     Ok(())
@@ -376,9 +379,8 @@ pub async fn get_controller_rating_history(cid: u32, api_key: &str) -> Result<Ve
         .send()
         .await?;
     if !resp.status().is_success() {
-        bail!(
-            "Got status {} from VATUSA controller rating history API for {cid}",
-            resp.status().as_u16()
+        return Err(
+            VatusaError::Unknown(resp.status().as_u16(), "controller rating history").into(),
         );
     }
     let data: Wrapper = resp.json().await?;
@@ -407,10 +409,7 @@ pub async fn get_facility_solo_certs() -> Result<Vec<SoloCertification>> {
         .send()
         .await?;
     if !resp.status().is_success() {
-        bail!(
-            "Got status {} from VATUSA solo certification list API",
-            resp.status().as_u16()
-        );
+        return Err(VatusaError::Unknown(resp.status().as_u16(), "facility solo certs").into());
     }
     let data: Wrapper = resp.json().await?;
     Ok(data.data)
@@ -435,10 +434,7 @@ pub async fn report_solo_cert(
         .send()
         .await?;
     if !resp.status().is_success() {
-        bail!(
-            "Got status {} from VATUSA solo certification create API for {cid}",
-            resp.status().as_u16()
-        );
+        return Err(VatusaError::Unknown(resp.status().as_u16(), "add solo cert").into());
     }
     Ok(())
 }
@@ -453,10 +449,7 @@ pub async fn delete_solo_cert(cid: u32, position: &str, api_key: &str) -> Result
         .send()
         .await?;
     if !resp.status().is_success() {
-        bail!(
-            "Got status {} from VATUSA solo certification delete API for {cid}",
-            resp.status().as_u16()
-        );
+        return Err(VatusaError::Unknown(resp.status().as_u16(), "delete solo cert").into());
     }
     Ok(())
 }

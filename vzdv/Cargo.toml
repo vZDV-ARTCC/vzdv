@@ -28,3 +28,4 @@ vatsim_utils = "0.5.4"
 fern = { version = "0.7.1", features = ["colored"] }
 humantime = "2.1.0"
 scraper = "0.23.1"
+thiserror = "2.0.18"

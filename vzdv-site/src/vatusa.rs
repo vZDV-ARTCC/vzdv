@@ -3,12 +3,26 @@
 use crate::AppError;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::Serialize;
+pub use vzdv::vatusa::{NewTrainingRecord, TrainingRecord};
 use vzdv::{
     sql::AuxiliaryTrainingData,
-    vatusa::{self, RatingHistory, RosterMember, TransferChecklist},
+    vatusa::{self, RatingHistory, RosterMember, TransferChecklist, VatusaError},
 };
 
-pub use vzdv::vatusa::{NewTrainingRecord, TrainingRecord};
+/// Map the generic `anyhow::Error` from the `vzdv::vatusa` module function
+/// to an `AppError` for this crate.
+///
+/// All errors from the `vzdv::vatusa` module _should_ be of the
+/// `vzdv::vatusa::VatusaError` type, which gives additional information
+/// about the source and reason for the error.
+fn map_err(error: anyhow::Error) -> AppError {
+    if let Some(e) = error.downcast_ref::<VatusaError>() {
+        AppError::VatusaApi(e.to_owned())
+    } else {
+        // not sure when this branch would be reached
+        AppError::GenericFallback("accessing VATUSA API", error)
+    }
+}
 
 /// Get the controller's public information.
 ///
@@ -19,7 +33,7 @@ pub async fn get_controller_info(
 ) -> Result<RosterMember, AppError> {
     let data = vatusa::get_controller_info(cid, api_key)
         .await
-        .map_err(AppError::VatusaApi)?;
+        .map_err(map_err)?;
     Ok(data)
 }
 
@@ -30,7 +44,7 @@ pub async fn get_training_records(
 ) -> Result<Vec<TrainingRecord>, AppError> {
     let data = vatusa::get_training_records(cid, api_key)
         .await
-        .map_err(AppError::VatusaApi)?;
+        .map_err(map_err)?;
     Ok(data)
 }
 
@@ -42,7 +56,7 @@ pub async fn save_training_record(
 ) -> Result<(), AppError> {
     vatusa::save_training_record(api_key, cid, data)
         .await
-        .map_err(AppError::VatusaApi)?;
+        .map_err(map_err)?;
     Ok(())
 }
 
@@ -50,7 +64,7 @@ pub async fn save_training_record(
 pub async fn transfer_checklist(cid: u32, api_key: &str) -> Result<TransferChecklist, AppError> {
     let data = vatusa::transfer_checklist(cid, api_key)
         .await
-        .map_err(AppError::VatusaApi)?;
+        .map_err(map_err)?;
     Ok(data)
 }
 
@@ -63,7 +77,7 @@ pub async fn report_solo_cert(
 ) -> Result<(), AppError> {
     vatusa::report_solo_cert(cid, position, expiration, api_key)
         .await
-        .map_err(AppError::VatusaApi)?;
+        .map_err(map_err)?;
     Ok(())
 }
 
@@ -71,7 +85,7 @@ pub async fn report_solo_cert(
 pub async fn delete_solo_cert(cid: u32, position: &str, api_key: &str) -> Result<(), AppError> {
     vatusa::delete_solo_cert(cid, position, api_key)
         .await
-        .map_err(AppError::VatusaApi)?;
+        .map_err(map_err)?;
     Ok(())
 }
 
@@ -82,7 +96,7 @@ pub async fn get_controller_rating_history(
 ) -> Result<Vec<RatingHistory>, AppError> {
     let data = vatusa::get_controller_rating_history(cid, api_key)
         .await
-        .map_err(AppError::VatusaApi)?;
+        .map_err(map_err)?;
     Ok(data)
 }
 
@@ -95,7 +109,7 @@ pub async fn remove_home_controller(
 ) -> Result<(), AppError> {
     vatusa::remove_home_controller(cid, by, reason, api_key)
         .await
-        .map_err(AppError::VatusaApi)?;
+        .map_err(map_err)?;
     Ok(())
 }
 
@@ -107,7 +121,7 @@ pub async fn remove_visiting_controller(
 ) -> Result<(), AppError> {
     vatusa::remove_visiting_controller(cid, reason, api_key)
         .await
-        .map_err(AppError::VatusaApi)?;
+        .map_err(map_err)?;
     Ok(())
 }
 
@@ -115,7 +129,7 @@ pub async fn remove_visiting_controller(
 pub async fn add_visiting_controller(cid: u32, api_key: &str) -> Result<(), AppError> {
     vatusa::add_visiting_controller(cid, api_key)
         .await
-        .map_err(AppError::VatusaApi)?;
+        .map_err(map_err)?;
     Ok(())
 }
 

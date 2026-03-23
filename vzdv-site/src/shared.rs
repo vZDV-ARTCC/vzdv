@@ -26,6 +26,7 @@ use vzdv::{
     controller_can_see,
     email::{self, send_mail},
     sql::{self, Controller},
+    vatusa::VatusaError,
 };
 
 /// Discord webhook for reporting errors.
@@ -50,7 +51,7 @@ pub enum AppError {
     #[error(transparent)]
     VatsimApi(#[from] vatsim_utils::errors::VatsimUtilError),
     #[error("error accessing VATUSA API: {0}")]
-    VatusaApi(anyhow::Error),
+    VatusaApi(VatusaError),
     #[error(transparent)]
     ChronoParse(#[from] chrono::ParseError),
     #[error(transparent)]

@@ -925,11 +925,19 @@ async fn post_add_training_note(
             .await?;
         }
         Err(e) => {
-            error!("Error saving new training record for {cid}: {e}");
+            let reason = if let AppError::VatusaApi(e) = e {
+                match e {
+                    vzdv::vatusa::VatusaError::Reason(_, _, reason) => reason,
+                    _ => String::from("unknown"),
+                }
+            } else {
+                String::from("unknown")
+            };
+            error!("Error saving new training record for {cid}: {reason}");
             push_flashed_message(
                 session,
                 MessageLevel::Error,
-                "Could not save new training record",
+                &format!("Could not save training record: {reason}"),
             )
             .await?;
         }
