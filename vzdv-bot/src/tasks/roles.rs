@@ -130,7 +130,7 @@ async fn get_correct_roles(
     controller: &Option<Controller>,
     certifications: &HashSet<String>,
 ) -> Result<Vec<(u64, bool)>> {
-    let mut to_resolve = Vec::with_capacity(15);
+    let mut to_resolve = Vec::with_capacity(27);
 
     let home_facility = controller
         .as_ref()
