@@ -25,7 +25,6 @@
   <form action="/events" method="POST" enctype="multipart/form-data">
     <div class="row">
       <div class="col">
-        <input type="hidden" name="timezone" id="input-timezone">
         <div class="mb-3">
           <label for="name" class="form-label">Event name</label>
           <input type="text" class="form-control" name="name" required>
@@ -47,11 +46,11 @@
         </div>
         <div class="row mb-3">
           <div class="col">
-            <label for="start" class="form-label">Start</label>
+            <label for="start" class="form-label">Start (Zulu)</label>
             <input type="datetime-local" name="start" class="form-control" required>
           </div>
           <div class="col">
-            <label for="end" class="form-label">End</label>
+            <label for="end" class="form-label">End (Zulu)</label>
             <input type="datetime-local" name="end" class="form-control" required>
           </div>
         </div>

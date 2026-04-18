@@ -98,7 +98,6 @@ struct NewEventData {
     banner: String,
     start: String,
     end: String,
-    timezone: String,
 }
 
 /// Submit the form to create a new event.
@@ -154,14 +153,11 @@ async fn post_new_event_form(
             "end" => {
                 event.end = field.text().await?;
             }
-            "timezone" => {
-                event.timezone = field.text().await?;
-            }
             _ => {}
         }
     }
-    let start = js_timestamp_to_utc(&event.start, &event.timezone)?;
-    let end = js_timestamp_to_utc(&event.end, &event.timezone)?;
+    let start = js_timestamp_to_utc(&event.start, "UTC")?;
+    let end = js_timestamp_to_utc(&event.end, "UTC")?;
 
     let result = sqlx::query(sql::CREATE_EVENT)
         .bind(cid)
