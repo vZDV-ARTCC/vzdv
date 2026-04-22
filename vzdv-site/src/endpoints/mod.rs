@@ -128,8 +128,8 @@ async fn page_feedback_form_post(
                     c.operating_initials.unwrap_or_else(|| String::from("??")),
                     feedback.position,
                     user_info.cid,
-                    if feedback.comments.len() >= 100 {
-                        format!("{} ...", &feedback.comments[0..100])
+                    if feedback.comments.len() >= 1_500 {
+                        format!("{} ...", &feedback.comments[0..1_500])
                     } else {
                         feedback.comments
                     }
@@ -141,8 +141,8 @@ async fn page_feedback_form_post(
                     feedback.rating,
                     feedback.position,
                     user_info.cid,
-                    if feedback.comments.len() >= 100 {
-                        format!("{} ...", &feedback.comments[0..100])
+                    if feedback.comments.len() >= 1_500 {
+                        format!("{} ...", &feedback.comments[0..1_500])
                     } else {
                         feedback.comments
                     }
