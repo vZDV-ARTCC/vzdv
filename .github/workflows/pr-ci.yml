@@ -5,6 +5,10 @@ on:
     branches:
       - master
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -12,22 +16,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # Caching for faster builds
       - name: Cache Rust Dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-            ${{ runner.os }}-cargo-
+        uses: Swatinem/rust-cache@v2
 
       # clippy::all doesn't include pedantic btw
       - name: Cargo Clippy
-        run: cargo clippy --release -- -D warning --warn clippy::all
+        run: cargo clippy --release -- -D warnings --warn clippy::all
 
       - name: Cargo Check
         run: cargo check --release
