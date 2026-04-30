@@ -1,1 +1,1 @@
-0 * * * * /srv/vzdv/backup.sh
+0 * * * * /home/zdv/vzdv/backup.sh

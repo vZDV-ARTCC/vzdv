@@ -3,8 +3,8 @@ Description=New vZDV Discord bot
 Requires=network.target
 
 [Service]
-WorkingDirectory=/srv/vzdv
-ExecStart=/srv/vzdv/vzdv-bot
+WorkingDirectory=/home/zdv/vzdv
+ExecStart=/home/zdv/vzdv/vzdv-bot
 Restart=always
 
 [Install]

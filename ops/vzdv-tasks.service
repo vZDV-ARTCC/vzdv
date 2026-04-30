@@ -3,8 +3,8 @@ Description=New vZDV site tasks
 Requires=network.target
 
 [Service]
-WorkingDirectory=/srv/vzdv
-ExecStart=/srv/vzdv/vzdv-tasks
+WorkingDirectory=/home/zdv/vzdv
+ExecStart=/home/zdv/vzdv/vzdv-tasks
 Restart=always
 
 [Install]
