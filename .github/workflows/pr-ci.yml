@@ -16,6 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # Caching for faster builds
       - name: Cache Rust Dependencies
         uses: Swatinem/rust-cache@v2
 
