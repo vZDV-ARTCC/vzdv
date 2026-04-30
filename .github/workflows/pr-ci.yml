@@ -27,7 +27,7 @@ jobs:
 
       # clippy::all doesn't include pedantic btw
       - name: Cargo Clippy
-        run: cargo clippy --release -- -D warning --warn clippy::all
+        run: cargo clippy --release -- -D warnings --warn clippy::all
 
       - name: Cargo Check
         run: cargo check --release
