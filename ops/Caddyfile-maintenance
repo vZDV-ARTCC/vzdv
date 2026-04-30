@@ -1,4 +1,4 @@
-example.com {
-	root * /srv/vzdv/static/
+zdvartcc.org {
+	root * /home/zdv/vzdv/static/
 	file_server
 }
