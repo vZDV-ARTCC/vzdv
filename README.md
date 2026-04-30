@@ -3,7 +3,7 @@
 ![lang](https://img.shields.io/badge/lang-rust-orange)
 ![licensing](https://img.shields.io/badge/license-MIT_or_Apache_2.0-blue)
 ![status](https://img.shields.io/badge/project_status-production-green)
-![CI](https://github.com/Celeo/vzdv/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/vzdv-artcc/vzdv/actions/workflows/pr-ci.yml/badge.svg)
 
 New vZDV website.
 
@@ -28,7 +28,7 @@ All content herein is solely for use on the [VATSIM network](https://vatsim.net/
 ### Steps
 
 ```sh
-git clone https://github.com/Celeo/vzdv
+git clone https://github.com/vzdv-artcc/vzdv
 cd vzdv
 cargo build
 ```

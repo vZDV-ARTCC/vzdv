@@ -5,9 +5,9 @@ authors = ["Celeo <mattboulanger@fastmail.com>"]
 edition = "2024"
 description = "VATSIM ZDV Discord bot"
 readme = "../README.md"
-homepage = "https://github.com/Celeo/vzdv"
-repository = "https://github.com/Celeo/vzdv"
-documentation = "https://github.com/Celeo/vzdv"
+homepage = "https://github.com/vzdv-artcc/vzdv"
+repository = "https://github.com/vzdv-artcc/vzdv"
+documentation = "https://github.com/vzdv-artcc/vzdv"
 license = "MIT OR Apache-2.0"
 publish = false
 

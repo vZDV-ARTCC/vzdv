@@ -41,7 +41,7 @@ const IGNORE_MISSING_STAFF_POSITIONS_FOR: [&str; 1] = ["FACCBT"];
 /// Include an HTTP user agent of the project's repo for contact.
 pub static GENERAL_HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     ClientBuilder::new()
-        .user_agent("github.com/celeo/vzdv")
+        .user_agent("github.com/zdv-artcc/vzdv")
         .build()
         .expect("Could not construct HTTP client")
 });
