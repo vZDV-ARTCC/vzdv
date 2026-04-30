@@ -17,17 +17,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Cache Rust Dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-            ${{ runner.os }}-cargo-
+        uses: Swatinem/rust-cache@v2
 
       # clippy::all doesn't include pedantic btw
       - name: Cargo Clippy
