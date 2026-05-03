@@ -21,3 +21,9 @@ zdvartcc.org {
 		reverse_proxy :3000
 	}
 }
+
+training.zdvartcc.org {
+	handle {
+		reverse_proxy :3001
+	}
+}
