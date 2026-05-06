@@ -4,3 +4,5 @@ vzdv.toml
 assets
 *.log
 caddy
+config/
+db-data/

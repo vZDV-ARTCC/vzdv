@@ -1,0 +1,27 @@
+services:
+  vzdv-site:
+    build:
+      context: .
+    command: ["/app/vzdv-site", "--config", "/app/config/vzdv.toml"]
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./assets:/app/assets
+      - ./config:/app/config
+      - ./db-data:/app/db-data
+
+  vzdv-tasks:
+    build:
+      context: .
+    command: ["/app/vzdv-tasks", "--config", "/app/config/vzdv.toml"]
+    volumes:
+      - ./config:/app/config
+      - ./db-data:/app/db-data
+
+  vzdv-bot:
+    build:
+      context: .
+    command: ["/app/vzdv-bot", "--config", "/app/config/vzdv.toml"]
+    volumes:
+      - ./config:/app/config
+      - ./db-data:/app/db-data
