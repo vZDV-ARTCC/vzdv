@@ -209,7 +209,7 @@ all = [
   { code = "U64", name = "MONTICELLO", location = "MONTICELLO, UT", towered = false, class = "" },
   { code = "U96", name = "CAL BLACK MEML", location = "HALLS CROSSING, UT", towered = false, class = "" },
   { code = "VTN", name = "MILLER FLD", location = "VALENTINE, NE", towered = false, class = "" },
-  { code = "W43", name = "HULETT MUNI", location = "HULETT, WY", towered = false }
+  { code = "W43", name = "HULETT MUNI", location = "HULETT, WY", towered = false, class = "" }
 ]
 
 [weather]
