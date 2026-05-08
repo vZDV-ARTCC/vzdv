@@ -1,1 +1,1 @@
-0 * * * * /home/zdv/vzdv/backup.sh
+0 * * * * /home/zdv/vzdv/ops/backup.sh >> /home/zdv/vzdv/backup.log 2>&1
