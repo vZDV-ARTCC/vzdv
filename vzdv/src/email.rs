@@ -51,9 +51,11 @@ pub async fn send_mail_raw(
         config.email.user.to_owned(),
         config.email.password.to_owned(),
     );
-    let mailer = SmtpTransport::relay(&config.email.host)
+    let mailer = SmtpTransport::starttls_relay(&config.email.host)
         .unwrap()
+        .port(config.email.port)
         .credentials(creds)
+        .timeout(Some(std::time::Duration::from_secs(10)))
         .build();
     mailer.send(&email)?;
     Ok(())
