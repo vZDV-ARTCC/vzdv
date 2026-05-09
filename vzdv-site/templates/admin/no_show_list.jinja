@@ -39,7 +39,7 @@
         </td>
         <td>{{ cid_name_name[entry.reported_by][0] }} {{ cid_name_name[entry.reported_by][1] }}</td>
         <td>{{ entry.entry_type|capitalize_first }}</td>
-        <td>{{ entry.created_date|nice_date }}z</td>
+        <td sorttable_customkey="{{ entry.created_date|unix_timestamp }}">{{ entry.created_date|nice_date }}z</td>
         <td>{{ entry.notes }}</td>
         <td>
           {% if entry.reported_by == user_info.cid or user_info.is_admin %}

@@ -116,6 +116,12 @@ fn load_templates() -> Result<Environment<'static>, AppError> {
             Some(f) => f.to_uppercase().chain(c).collect(),
         }
     });
+    env.add_filter("unix_timestamp", |date: String| {
+        chrono::DateTime::parse_from_rfc3339(&date)
+            .unwrap()
+            .timestamp()
+            .to_string()
+    });
 
     Ok(env)
 }
