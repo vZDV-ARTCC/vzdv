@@ -28,8 +28,21 @@ use tower_sessions::Session;
 use uuid::Uuid;
 use vzdv::{
     ControllerRating, PermissionsGroup,
-    sql::{self, Controller, Event, EventPosition, EventRegistration},
+    sql::{self, Controller, Event, EventCicPosition, EventPosition, EventRegistration},
 };
+
+/// Format a controller's name for display on the event page
+fn format_controller_name(controller: &Controller) -> String {
+    format!(
+        "{} {} ({})",
+        controller.first_name,
+        controller.last_name,
+        match controller.operating_initials.as_ref() {
+            Some(oi) => oi,
+            None => "??",
+        }
+    )
+}
 
 /// Get a list of upcoming events optionally with unpublished events.
 pub async fn query_for_events(db: &Pool<Sqlite>, show_all: bool) -> sqlx::Result<Vec<Event>> {
@@ -315,15 +328,7 @@ async fn event_positions_extra(
                     id: position.id,
                     name: position.name.clone(),
                     category: position.category.clone(),
-                    controller: format!(
-                        "{} {} ({})",
-                        controller.first_name,
-                        controller.last_name,
-                        match controller.operating_initials.as_ref() {
-                            Some(oi) => oi,
-                            None => "??",
-                        }
-                    ),
+                    controller: format_controller_name(&controller),
                 });
                 continue;
             }
@@ -336,6 +341,42 @@ async fn event_positions_extra(
         });
     }
     ret.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(ret)
+}
+
+#[derive(Serialize)]
+struct EventCicPositionDisplay {
+    category: String,
+    controller: String,
+}
+
+async fn event_cic_positions(
+    db: &Pool<Sqlite>,
+    event_id: u32,
+) -> Result<Vec<EventCicPositionDisplay>, AppError> {
+    let positions: Vec<EventCicPosition> = sqlx::query_as(sql::GET_CIC_POSITIONS_BY_EVENT)
+        .bind(event_id)
+        .fetch_all(db)
+        .await?;
+
+    let mut ret = Vec::with_capacity(positions.len());
+    for position in positions {
+        ret.push(EventCicPositionDisplay {
+            category: position.category,
+            controller: match position.cid {
+                Some(cid) => {
+                    let controller = sqlx::query_as::<_, Controller>(sql::GET_CONTROLLER_BY_CID)
+                        .bind(cid)
+                        .fetch_one(db)
+                        .await?;
+
+                    format_controller_name(&controller)
+                }
+                None => "unassigned".to_string(),
+            },
+        });
+    }
+    ret.sort_by(|a, b| a.category.cmp(&b.category));
     Ok(ret)
 }
 
