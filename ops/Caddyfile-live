@@ -1,5 +1,5 @@
 zdvartcc.org {
-	handle /vatis.json {
+	handle /static_special/vatis.json {
 		reverse_proxy https://raw.githubusercontent.com {
 			header_up Host {upstream_hostport}
 			header_down Content-Type "application/octet-stream"
