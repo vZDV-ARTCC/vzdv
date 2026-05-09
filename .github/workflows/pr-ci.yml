@@ -19,6 +19,8 @@ jobs:
       # Caching for faster builds
       - name: Cache Rust Dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-cache
 
       # clippy::all doesn't include pedantic btw
       - name: Cargo Clippy
