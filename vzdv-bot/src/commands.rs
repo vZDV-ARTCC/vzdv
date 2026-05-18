@@ -264,6 +264,16 @@ pub async fn handler(
                             embed = embed.image(ImageSource::url(url)?);
                         }
                         if action == "action_overview" {
+                            let formatted_description = if db_event
+                                .description
+                                .as_ref()
+                                .is_some_and(|d| d.len() > 1024)
+                            {
+                                format!("{}...", &db_event.description.as_ref().unwrap()[..1021])
+                            } else {
+                                db_event.description.unwrap_or_default()
+                            };
+
                             embed = embed
                                 .field(
                                     EmbedFieldBuilder::new(
@@ -287,7 +297,7 @@ pub async fn handler(
                                 )
                                 .field(EmbedFieldBuilder::new(
                                     "Description",
-                                    db_event.description.unwrap_or_default(),
+                                    formatted_description,
                                 ));
                         } else {
                             let controllers: Vec<Controller> =
