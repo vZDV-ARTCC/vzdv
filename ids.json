@@ -70,5 +70,109 @@
         }
       }
     ]
+  },
+  "KASE": {
+    "flows": {
+      "VMC": {
+        "name": "VMC",
+        "depRwys": ["33"],
+        "arrRwys": ["15"]
+      },
+      "VMC 15 TAILWIND": {
+        "name": "VMC 15 TAILWIND",
+        "depRwys": ["33"],
+        "arrRwys": ["15"]
+      },
+      "VMC 33 TAILWIND": {
+        "name": "VMC 33 TAILWIND",
+        "depRwys": ["33"],
+        "arrRwys": ["15"]
+      },
+      "IMC": {
+        "name": "IMC",
+        "depRwys": ["33"],
+        "arrRwys": ["15"]
+      },
+      "IMC 15 TAILWIND": {
+        "name": "IMC 15 TAILWIND",
+        "depRwys": ["33"],
+        "arrRwys": ["15"]
+      },
+      "IMC 33 TAILWIND": {
+        "name": "IMC 33 TAILWIND",
+        "depRwys": ["33"],
+        "arrRwys": ["15"]
+      }
+    },
+    "rules": [
+      {
+        "conds": ["VFR", "MVFR"],
+        "speedBounds": {
+          "minKts": 0,
+          "maxKts": 9
+        },
+        "useFlow": "VMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 280,
+          "clockDir": "cw",
+          "windTo": 20
+        },
+        "speedBounds": {
+          "minKts": 10,
+          "maxKts": 200
+        },
+        "useFlow": "VMC 15 TAILWIND"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 100,
+          "clockDir": "cw",
+          "windTo": 200
+        },
+        "speedBounds": {
+          "minKts": 10,
+          "maxKts": 200
+        },
+        "useFlow": "VMC 33 TAILWIND"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "speedBounds": {
+          "minKts": 0,
+          "maxKts": 9
+        },
+        "useFlow": "IMC"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 280,
+          "clockDir": "cw",
+          "windTo": 20
+        },
+        "speedBounds": {
+          "minKts": 10,
+          "maxKts": 200
+        },
+        "useFlow": "IMC 15 TAILWIND"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 100,
+          "clockDir": "cw",
+          "windTo": 200
+        },
+        "speedBounds": {
+          "minKts": 10,
+          "maxKts": 200
+        },
+        "useFlow": "IMC 33 TAILWIND"
+      }
+    ]
   }
 }

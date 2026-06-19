@@ -8,11 +8,6 @@ use crate::{
     sql::Atis,
 };
 
-type WindDirection = u16;
-/// This really shouldn't exceed 255kts lol
-type WindSpeed = u8;
-type CloudLayerAGL = u16;
-
 #[derive(Deserialize, Debug, Clone)]
 pub struct AirportProcedure {
     pub try_match: Option<TryMatchProcedure>,
@@ -126,12 +121,13 @@ pub struct FlowRule {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct WindSpeedBounds {
-    min_kts: WindSpeed,
-    max_kts: WindSpeed,
+    min_kts: u8,
+    max_kts: u8,
 }
 
 impl WindSpeedBounds {
-    pub fn is_within_bounds(&self, wind_kts: WindSpeed) -> bool {
+    #[inline]
+    pub fn is_within_bounds(&self, wind_kts: u8) -> bool {
         wind_kts >= self.min_kts && wind_kts <= self.max_kts
     }
 }
@@ -139,16 +135,17 @@ impl WindSpeedBounds {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct WindDirectionBounds {
-    pub wind_from: WindDirection,
+    pub wind_from: u16,
     pub clock_dir: ClockDir,
-    pub wind_to: WindDirection,
+    pub wind_to: u16,
 }
 
 impl WindDirectionBounds {
-    pub fn is_within_bounds(&self, wind_dir: WindDirection) -> bool {
+    #[inline]
+    pub fn is_within_bounds(&self, wind_dir: u16) -> bool {
         // If clock_dir is CW, then consider range (wind_from..=wind_to)
         // If clock_dir is CCW, then consider range (wind_to..=wind_from)
-        // Adding 360 if we know if the wind dir wraps around 360
+        // Adding 360 if we know the wind dir wraps around 360
 
         let range = match self.clock_dir {
             ClockDir::Clockwise => {
@@ -272,5 +269,109 @@ mod tests {
         assert!(bounds.is_within_bounds(350));
         assert!(bounds.is_within_bounds(0));
         assert!(!bounds.is_within_bounds(180));
+    }
+
+    // ASE Tests
+
+    #[test]
+    fn ase_vmc_flow() {
+        let config = load_config();
+        let procedure = config.0.get("KASE").unwrap();
+        let weather = AirportWeather {
+            ceiling: 0,
+            conditions: WeatherConditions::VFR,
+            name: "ASE".into(),
+            raw: "".into(),
+            visibility: 10,
+            wind: (350, 5, 9),
+        };
+
+        let flow = procedure.determine_flow(&weather, &[]).unwrap();
+        assert_eq!(flow.name, "VMC")
+    }
+
+    #[test]
+    fn ase_vmc_15_tw_flow() {
+        let config = load_config();
+        let procedure = config.0.get("KASE").unwrap();
+        let weather = AirportWeather {
+            ceiling: 0,
+            conditions: WeatherConditions::VFR,
+            name: "ASE".into(),
+            raw: "".into(),
+            visibility: 10,
+            wind: (350, 5, 15),
+        };
+
+        let flow = procedure.determine_flow(&weather, &[]).unwrap();
+        assert_eq!(flow.name, "VMC 15 TAILWIND")
+    }
+
+    #[test]
+    fn ase_vmc_33_tw_flow() {
+        let config = load_config();
+        let procedure = config.0.get("KASE").unwrap();
+        let weather = AirportWeather {
+            ceiling: 0,
+            conditions: WeatherConditions::VFR,
+            name: "ASE".into(),
+            raw: "".into(),
+            visibility: 10,
+            wind: (150, 5, 15),
+        };
+
+        let flow = procedure.determine_flow(&weather, &[]).unwrap();
+        assert_eq!(flow.name, "VMC 33 TAILWIND")
+    }
+
+    #[test]
+    fn ase_imc_flow() {
+        let config = load_config();
+        let procedure = config.0.get("KASE").unwrap();
+        let weather = AirportWeather {
+            ceiling: 0,
+            conditions: WeatherConditions::IFR,
+            name: "ASE".into(),
+            raw: "".into(),
+            visibility: 10,
+            wind: (350, 5, 9),
+        };
+
+        let flow = procedure.determine_flow(&weather, &[]).unwrap();
+        assert_eq!(flow.name, "IMC")
+    }
+
+    #[test]
+    fn ase_imc_15_tw_flow() {
+        let config = load_config();
+        let procedure = config.0.get("KASE").unwrap();
+        let weather = AirportWeather {
+            ceiling: 0,
+            conditions: WeatherConditions::IFR,
+            name: "ASE".into(),
+            raw: "".into(),
+            visibility: 10,
+            wind: (350, 5, 15),
+        };
+
+        let flow = procedure.determine_flow(&weather, &[]).unwrap();
+        assert_eq!(flow.name, "IMC 15 TAILWIND")
+    }
+
+    #[test]
+    fn ase_imc_33_tw_flow() {
+        let config = load_config();
+        let procedure = config.0.get("KASE").unwrap();
+        let weather = AirportWeather {
+            ceiling: 0,
+            conditions: WeatherConditions::IFR,
+            name: "ASE".into(),
+            raw: "".into(),
+            visibility: 10,
+            wind: (150, 5, 15),
+        };
+
+        let flow = procedure.determine_flow(&weather, &[]).unwrap();
+        assert_eq!(flow.name, "IMC 33 TAILWIND")
     }
 }
