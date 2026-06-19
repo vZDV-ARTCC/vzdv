@@ -1,0 +1,74 @@
+{
+  "KAPA": {
+    "flows": {
+      "SOUTH VMC": {
+        "name": "SOUTH VMC",
+        "depRwys": ["17L", "17R"],
+        "arrRwys": ["17L", "17R"]
+      },
+      "NORTH VMC": {
+        "name": "NORTH VMC",
+        "depRwys": ["35L", "35R"],
+        "arrRwys": ["35L", "35R"]
+      },
+      "SOUTH IMC": {
+        "name": "SOUTH IMC",
+        "depRwys": ["17L"],
+        "arrRwys": ["17L"]
+      },
+      "NORTH IMC": {
+        "name": "NORTH IMC",
+        "depRwys": ["35R"],
+        "arrRwys": ["35R"]
+      }
+    },
+    "rules": [
+      {
+        "calm": true,
+        "conds": ["VFR", "MVFR"],
+        "useFlow": "SOUTH VMC"
+      },
+      {
+        "calm": true,
+        "conds": ["IFR", "LIFR"],
+        "useFlow": "SOUTH IMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "useFlow": "SOUTH VMC",
+        "directionBounds": {
+          "windFrom": 80,
+          "clockDir": "cw",
+          "windTo": 259
+        }
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "useFlow": "NORTH VMC",
+        "directionBounds": {
+          "windFrom": 260,
+          "clockDir": "cw",
+          "windTo": 79
+        }
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "useFlow": "SOUTH IMC",
+        "directionBounds": {
+          "windFrom": 80,
+          "clockDir": "cw",
+          "windTo": 259
+        }
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "useFlow": "NORTH IMC",
+        "directionBounds": {
+          "windFrom": 260,
+          "clockDir": "cw",
+          "windTo": 79
+        }
+      }
+    ]
+  }
+}
