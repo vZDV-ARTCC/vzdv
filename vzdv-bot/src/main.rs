@@ -30,6 +30,12 @@ struct Cli {
     #[arg(long)]
     config: Option<PathBuf>,
 
+    /// Load the IDS config
+    ///
+    /// [default: ids.json]
+    #[arg(long)]
+    ids_config: Option<PathBuf>,
+
     /// Enable debug logging
     #[arg(short, long)]
     debug: bool,
@@ -54,7 +60,7 @@ fn bot_id_from_token(token: &str) -> u64 {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    let (config, db) = general_setup(cli.debug, "vzdv_bot", cli.config).await;
+    let (config, db, _) = general_setup(cli.debug, "vzdv_bot", cli.config, cli.ids_config).await;
     let config = Arc::new(config);
 
     let token = &config.discord.bot_token;

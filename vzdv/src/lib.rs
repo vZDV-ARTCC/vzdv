@@ -22,11 +22,14 @@ use std::{
     time::SystemTime,
 };
 
+use crate::config::ConfigIDS;
+
 pub mod activity;
 pub mod aviation;
 pub mod config;
 pub mod db;
 pub mod email;
+pub mod ids;
 pub mod kden;
 pub mod sql;
 pub mod vatsim;
@@ -345,7 +348,8 @@ pub async fn general_setup(
     debug_logging: bool,
     binary_name: &str,
     config_path: Option<PathBuf>,
-) -> (Config, Pool<Sqlite>) {
+    ids_config_path: Option<PathBuf>,
+) -> (Config, Pool<Sqlite>, ConfigIDS) {
     let colors_line = ColoredLevelConfig::new()
         .error(Color::Red)
         .warn(Color::Yellow)
@@ -444,6 +448,15 @@ pub async fn general_setup(
             std::process::exit(1);
         }
     };
+    let ids_config_location =
+        ids_config_path.unwrap_or(Path::new(config::DEFAULT_IDS_CONFIG_FILE_NAME).to_owned());
+    let ids_config = match ConfigIDS::load_from_disk(&ids_config_location) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Could not load config: {e}");
+            std::process::exit(1);
+        }
+    };
     debug!("Creating DB connection");
     let db = match load_db(&config).await {
         Ok(db) => db,
@@ -453,7 +466,7 @@ pub async fn general_setup(
         }
     };
 
-    (config, db)
+    (config, db, ids_config)
 }
 
 /// Retrieve all OIs that are currently in use.

@@ -3,7 +3,10 @@
 use crate::{
     flashed_messages,
     flights::get_relevant_flights,
-    shared::{AppError, AppState, CacheEntry, SESSION_USER_INFO_KEY, UserInfo, record_log},
+    shared::{
+        AppError, AppState, CacheEntry, SESSION_USER_INFO_KEY, UserInfo, get_all_weather,
+        record_log,
+    },
 };
 use axum::{
     Form, Router,
@@ -12,7 +15,6 @@ use axum::{
     routing::{get, post},
 };
 use itertools::Itertools;
-use log::warn;
 use minijinja::context;
 use num_format::{Locale, ToFormattedString};
 use reqwest::StatusCode;
@@ -108,34 +110,12 @@ async fn page_weather(
         state.cache.invalidate(&cache_key);
     }
 
-    let resp = GENERAL_HTTP_CLIENT
-        .get(format!(
-            "https://metar.vatsim.net/{}",
-            state
-                .config
-                .weather
-                .all
-                .iter()
-                .map(|s| format!("K{s}"))
-                .sorted()
-                .join(",")
-        ))
-        .send()
-        .await?;
-    if !resp.status().is_success() {
-        return Err(AppError::HttpResponse("METAR API", resp.status().as_u16()));
-    }
-    let text = resp.text().await?;
-    let weather: Vec<_> = text
-        .split_terminator('\n')
-        .flat_map(|line| {
-            parse_metar(line).map_err(|e| {
-                let airport = line.split(' ').next().unwrap_or("Unknown");
-                warn!("Metar parsing failure for {airport}: {e}");
-                e
-            })
-        })
-        .collect();
+    let weather = match get_all_weather(&state).await {
+        Ok(weather) => weather,
+        Err(_) => {
+            return Err(AppError::HttpResponse("METAR API returned an error", 500));
+        }
+    };
 
     let user_info: Option<UserInfo> = session.get(SESSION_USER_INFO_KEY).await?;
     let template = state.templates.get_template("airspace/weather.jinja")?;

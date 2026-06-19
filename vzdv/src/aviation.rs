@@ -1,10 +1,10 @@
 use anyhow::{Result, anyhow};
 use log::warn;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Derived weather conditions.
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Serialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub enum WeatherConditions {
     VFR,
     MVFR,
@@ -13,18 +13,18 @@ pub enum WeatherConditions {
 }
 
 /// Parsed weather information for an airport.
-#[derive(Serialize)]
-pub struct AirportWeather<'a> {
-    pub name: &'a str,
+#[derive(Serialize, Deserialize)]
+pub struct AirportWeather {
+    pub name: String,
     pub conditions: WeatherConditions,
     pub visibility: u16,
     pub ceiling: u16,
     pub wind: (u16, u8, u8),
-    pub raw: &'a str,
+    pub raw: String,
 }
 
 /// Parse a METAR into a struct of data.
-pub fn parse_metar(line: &str) -> Result<AirportWeather<'_>> {
+pub fn parse_metar(line: &str) -> Result<AirportWeather> {
     let parts: Vec<_> = line.split(' ').collect();
     let airport = {
         let s = parts.first().ok_or_else(|| anyhow!("Blank metar?"))?;
@@ -98,12 +98,12 @@ pub fn parse_metar(line: &str) -> Result<AirportWeather<'_>> {
     };
 
     Ok(AirportWeather {
-        name: airport,
+        name: airport.to_string(),
         conditions,
         visibility,
         ceiling,
         wind,
-        raw: line,
+        raw: line.to_string(),
     })
 }
 

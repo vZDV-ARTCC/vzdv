@@ -71,7 +71,7 @@ impl DenverConfig {
 }
 
 /// Determine the likiest KDEN runway configuration based on the weather.
-pub fn determine_runway_config(weather: &AirportWeather<'_>) -> DenverConfig {
+pub fn determine_runway_config(weather: &AirportWeather) -> DenverConfig {
     let dir = weather.wind.0;
     let mag = std::cmp::max(weather.wind.1, weather.wind.2); // use gust if present
 
@@ -135,7 +135,7 @@ static RUNWAYS: [(&str, f32); 12] = [
 ];
 
 /// Determine the wind components for all the runways.
-pub fn wind_components(weather: &AirportWeather<'_>) -> Vec<WindComponent> {
+pub fn wind_components(weather: &AirportWeather) -> Vec<WindComponent> {
     let dir = weather.wind.0 as f32;
     let mag = std::cmp::max(weather.wind.1, weather.wind.2) as f32; // use gust if present
 

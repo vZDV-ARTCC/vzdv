@@ -1,12 +1,14 @@
 //! Structs and data to be shared across multiple parts of the site.
 
 use crate::vatusa;
+use anyhow::{Result, bail};
 use axum::extract::rejection::FormRejection;
 use axum::{
     http::StatusCode,
     response::{Html, IntoResponse, Redirect, Response},
 };
 use chrono::{NaiveDateTime, TimeZone, Utc};
+use itertools::Itertools;
 use log::{error, info, warn};
 use mini_moka::sync::Cache;
 use minijinja::{Environment, context};
@@ -20,6 +22,8 @@ use std::{
     time::Instant,
 };
 use tower_sessions_sqlx_store::sqlx::SqlitePool;
+use vzdv::aviation::{AirportWeather, parse_metar};
+use vzdv::config::ConfigIDS;
 use vzdv::{
     GENERAL_HTTP_CLIENT, PermissionsGroup,
     config::Config,
@@ -179,6 +183,8 @@ impl CacheEntry {
 pub struct AppState {
     /// App config
     pub config: Config,
+    /// IDS config
+    pub ids_config: ConfigIDS,
     /// Access to the DB
     pub db: SqlitePool,
     /// Loaded templates
@@ -403,6 +409,55 @@ pub async fn remove_controller_from_roster(
     )
     .await?;
     Ok(())
+}
+
+pub async fn get_all_weather(state: &AppState) -> Result<Vec<AirportWeather>> {
+    let cache_key = "METAR_FULL".to_string();
+
+    if let Some(cached) = state.cache.get(&cache_key) {
+        let elapsed = Instant::now() - cached.inserted;
+        if elapsed.as_secs() < 300 {
+            return Ok(serde_json::from_str(&cached.data)?);
+        }
+        state.cache.invalidate(&cache_key);
+    }
+
+    let resp = GENERAL_HTTP_CLIENT
+        .get(format!(
+            "https://metar.vatsim.net/{}",
+            state
+                .config
+                .weather
+                .all
+                .iter()
+                .map(|s| format!("K{s}"))
+                .sorted()
+                .join(",")
+        ))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        error!("METAR API returned status {}", resp.status());
+        bail!("METAR API returned status {}", resp.status());
+    }
+    let text = resp.text().await?;
+    let metar_list: Vec<_> = text
+        .split_terminator('\n')
+        .flat_map(|line| {
+            parse_metar(line).map_err(|e| {
+                let airport = line.split(' ').next().unwrap_or("Unknown");
+                warn!("Metar parsing failure for {airport}: {e}");
+                anyhow::anyhow!(e)
+            })
+        })
+        .collect();
+
+    let metar_list_json = serde_json::to_string(&metar_list)?;
+    state
+        .cache
+        .insert(cache_key, CacheEntry::new(metar_list_json));
+
+    Ok(metar_list)
 }
 
 #[cfg(test)]

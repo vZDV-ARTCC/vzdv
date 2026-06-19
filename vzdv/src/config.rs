@@ -1,9 +1,12 @@
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path};
+use std::{collections::HashMap, fs, path::Path};
+
+use crate::ids::AirportProcedure;
 
 /// Default place to look for the config file.
 pub const DEFAULT_CONFIG_FILE_NAME: &str = "vzdv.toml";
+pub const DEFAULT_IDS_CONFIG_FILE_NAME: &str = "ids.json";
 
 /// App configuration.
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -156,6 +159,21 @@ pub struct ConfigEmail {
     pub password: String,
     pub from: String,
     pub reply_to: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ConfigIDS(pub HashMap<String, AirportProcedure>);
+
+impl ConfigIDS {
+    /// Read the JSON file at the given path and load into the app's configuration file.
+    pub fn load_from_disk(path: &Path) -> Result<Self> {
+        if !Path::new(path).exists() {
+            bail!("Config file \"{}\" not found", path.display());
+        }
+        let text = fs::read_to_string(path)?;
+        let config: ConfigIDS = serde_json::from_str(&text)?;
+        Ok(config)
+    }
 }
 
 impl Config {

@@ -43,6 +43,12 @@ struct Cli {
     #[arg(long)]
     config: Option<PathBuf>,
 
+    /// Load the IDS config
+    ///
+    /// [default: ids.json]
+    #[arg(long)]
+    ids_config: Option<PathBuf>,
+
     /// Enable debug logging
     #[arg(short, long)]
     debug: bool,
@@ -184,7 +190,8 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    let (config, db) = general_setup(cli.debug, "vzdv_site", cli.config).await;
+    let (config, db, ids_config) =
+        general_setup(cli.debug, "vzdv_site", cli.config, cli.ids_config).await;
     ERROR_WEBHOOK
         .set(config.discord.webhooks.errors.clone())
         .expect("Could not set global error webhook");
@@ -213,6 +220,7 @@ async fn main() {
     debug!("Setting up app");
     let app_state = Arc::new(AppState {
         config,
+        ids_config,
         db: db.clone(),
         templates,
         cache: Cache::new(30),
