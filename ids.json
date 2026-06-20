@@ -1,4 +1,31 @@
 {
+  "KDEN": {
+    "flows": {
+      "NORTH CALM": {
+        "name": "NORTH CALM",
+        "depRwys": ["8", "25", "34L"],
+        "arrRwys": ["34R", "35L", "35R"]
+      },
+      "SOUTH CALM": {
+        "name": "SOUTH CALM",
+        "depRwys": ["8", "25", "17L"],
+        "arrRwys": ["16L", "16R", "17R"]
+      },
+      "SOUTH EAST": {
+        "name": "SOUTH EAST",
+        "depRwys": ["8", "17L"],
+        "arrRwys": ["7", "16L", "16R", "17R"]
+      },
+      "SOUTH WEST (VMC)": {
+        "name": "SOUTH WEST (VMC)",
+        "depRwys": ["17L", "16R", "26"],
+        "arrRwys": [""]
+      }
+    },
+    "rules": [
+
+    ]
+  },
   "KAPA": {
     "flows": {
       "SOUTH VMC": {
@@ -172,6 +199,693 @@
           "maxKts": 200
         },
         "useFlow": "IMC 33 TAILWIND"
+      }
+    ]
+  },
+  "KBJC": {
+    "flows": {
+      "WEST VMC": {
+        "name": "WEST VMC",
+        "depRwys": ["30L", "30R"],
+        "arrRwys": ["30L", "30R"]
+      },
+      "WEST IMC": {
+        "name": "WEST IMC",
+        "depRwys": ["30R"],
+        "arrRwys": ["30R"]
+      },
+      "EAST VMC": {
+        "name": "EAST VMC",
+        "depRwys": ["12L", "12R"],
+        "arrRwys": ["12L", "12R"]
+      },
+      "EAST IMC": {
+        "name": "EAST IMC",
+        "depRwys": ["12L"],
+        "arrRwys": ["12L"]
+      }
+    },
+    "rules": [
+      {
+        "calm": true,
+        "conds": ["VFR", "MVFR"],
+        "useFlow": "WEST VMC"
+      },
+      {
+        "calm": true,
+        "conds": ["IFR", "LIFR"],
+        "useFlow": "WEST IMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 30,
+          "clockDir": "cw",
+          "windTo": 209
+        },
+        "useFlow": "WEST VMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 210,
+          "clockDir": "cw",
+          "windTo": 29
+        },
+        "useFlow": "EAST VMC"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 30,
+          "clockDir": "cw",
+          "windTo": 209
+        },
+        "useFlow": "WEST IMC"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 210,
+          "clockDir": "cw",
+          "windTo": 29
+        },
+        "useFlow": "EAST IMC"
+      }
+    ]
+  },
+  "KCFO": {
+    "flows": {
+      "SOUTH VMC": {
+        "name": "SOUTH VMC",
+        "depRwys": ["17"],
+        "arrRwys": ["17"]
+      },
+      "SOUTH IMC": {
+        "name": "SOUTH IMC",
+        "depRwys": ["17"],
+        "arrRwys": ["17"]
+      },
+      "NORTH VMC": {
+        "name": "NORTH VMC",
+        "depRwys": ["35"],
+        "arrRwys": ["35"]
+      },
+      "NORTH IMC": {
+        "name": "NORTH IMC",
+        "depRwys": ["35"],
+        "arrRwys": ["35"]
+      }
+    },
+    "rules": [
+      {
+        "calm": true,
+        "conds": ["VFR", "MVFR"],
+        "useFlow": "SOUTH VMC"
+      },
+      {
+        "calm": true,
+        "conds": ["IFR", "LIFR"],
+        "useFlow": "SOUTH IMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 80,
+          "clockDir": "cw",
+          "windTo": 249
+        },
+        "useFlow": "NORTH VMC"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 80,
+          "clockDir": "cw",
+          "windTo": 249
+        },
+        "useFlow": "NORTH IMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 250,
+          "clockDir": "cw",
+          "windTo": 79
+        },
+        "useFlow": "SOUTH VMC"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 250,
+          "clockDir": "cw",
+          "windTo": 79
+        },
+        "useFlow": "SOUTH IMC"
+      }
+    ]
+  },
+  "KCOS": {
+    "flows": {
+      "NORTH VMC": {
+        "name": "NORTH VMC",
+        "depRwys": ["35L", "35R"],
+        "arrRwys": ["35L", "35R"]
+      },
+      "SOUTH VMC": {
+        "name": "SOUTH VMC",
+        "depRwys": ["17L", "17R"],
+        "arrRwys": ["17L", "17R"]
+      },
+      "NORTH IMC": {
+        "name": "NORTH IMC",
+        "depRwys": ["35L", "35R"],
+        "arrRwys": ["35L", "35R"]
+      },
+      "SOUTH IMC": {
+        "name": "SOUTH IMC",
+        "depRwys": ["17L", "17R"],
+        "arrRwys": ["17L", "17R"]
+      }
+    },
+    "rules": [
+      {
+        "calm": true,
+        "conds": ["VFR", "MVFR"],
+        "useFlow": "SOUTH VMC"
+      },
+      {
+        "calm": true,
+        "conds": ["IFR", "LIFR"],
+        "useFlow": "SOUTH IMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 250,
+          "clockDir": "cw",
+          "windTo": 79
+        },
+        "useFlow": "NORTH VMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 80,
+          "clockDir": "cw",
+          "windTo": 249
+        },
+        "useFlow": "SOUTH VMC"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 250,
+          "clockDir": "cw",
+          "windTo": 79
+        },
+        "useFlow": "NORTH IMC"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 80,
+          "clockDir": "cw",
+          "windTo": 249
+        },
+        "useFlow": "SOUTH IMC"
+      }
+    ]
+  },
+  "KCYS": {
+    "flows": {
+      "WEST VMC": {
+        "name": "WEST VMC",
+        "depRwys": ["27"],
+        "arrRwys": ["27"]
+      },
+      "WEST IMC": {
+        "name": "WEST IMC",
+        "depRwys": ["27"],
+        "arrRwys": ["27"]
+      },
+      "EAST VMC": {
+        "name": "EAST VMC",
+        "depRwys": ["9"],
+        "arrRwys": ["9"]
+      },
+      "EAST IMC": {
+        "name": "EAST IMC",
+        "depRwys": ["9"],
+        "arrRwys": ["9"]
+      }
+    },
+    "rules": [
+      {
+        "calm": true,
+        "conds": ["VFR", "MVFR"],
+        "useFlow": "WEST VMC"
+      },
+      {
+        "calm": true,
+        "conds": ["IFR", "LIFR"],
+        "useFlow": "WEST IMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 0,
+          "clockDir": "cw",
+          "windTo": 180
+        },
+        "useFlow": "EAST VMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 181,
+          "clockDir": "cw",
+          "windTo": 359
+        },
+        "useFlow": "WEST VMC"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 0,
+          "clockDir": "cw",
+          "windTo": 180
+        },
+        "useFlow": "EAST IMC"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 181,
+          "clockDir": "cw",
+          "windTo": 359
+        },
+        "useFlow": "WEST IMC"
+      }
+    ]
+  },
+  "KEGE": {
+    "flows": {
+      "WEST": {
+        "name": "WEST",
+        "depRwys": ["25"],
+        "arrRwys": ["25"]
+      }
+    },
+    "rules": [
+      {
+        "conds": ["VFR", "MVFR", "IFR", "LIFR"],
+        "useFlow": "WEST"
+      }
+    ]
+  },
+  "KFMN": {
+    "flows": {
+      "WEST VMC": {
+        "name": "WEST VMC",
+        "depRwys": ["25"],
+        "arrRwys": ["25"]
+      },
+      "EAST VMC": {
+        "name": "EAST VMC",
+        "depRwys": ["7"],
+        "arrRwys": ["7"]
+      },
+      "WEST IMC": {
+        "name": "WEST IMC",
+        "depRwys": ["25"],
+        "arrRwys": ["25"]
+      },
+      "EAST IMC": {
+        "name": "EAST IMC",
+        "depRwys": ["7"],
+        "arrRwys": ["7"]
+      }
+    },
+    "rules": [
+      {
+        "calm": true,
+        "conds": ["VFR", "MVFR"],
+        "useFlow": "WEST VMC"
+      },
+      {
+        "calm": true,
+        "conds": ["IFR", "LIFR"],
+        "useFlow": "WEST IMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 160,
+          "clockDir": "cw",
+          "windTo": 349
+        },
+        "useFlow": "WEST VMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 350,
+          "clockDir": "cw",
+          "windTo": 159
+        },
+        "useFlow": "EAST VMC"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 350,
+          "clockDir": "cw",
+          "windTo": 159
+        },
+        "useFlow": "EAST IMC"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 160,
+          "clockDir": "cw",
+          "windTo": 349
+        },
+        "useFlow": "WEST IMC"
+      }
+    ]
+  },
+  "KFNL": {
+    "flows": {
+      "NORTH": {
+        "name": "NORTH",
+        "depRwys": ["33"],
+        "arrRwys": ["33"]
+      },
+      "SOUTH": {
+        "name": "SOUTH",
+        "depRwys": ["15"],
+        "arrRwys": ["15"]
+      },
+      "IMC": {
+        "name": "IMC",
+        "depRwys": ["33"],
+        "arrRwys": ["33"]
+      }
+    },
+    "rules": [
+      {
+        "calm": true,
+        "conds": ["VFR", "MVFR"],
+        "useFlow": "NORTH"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "useFlow": "IMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 240,
+          "clockDir": "cw",
+          "windTo": 59
+        },
+        "useFlow": "NORTH"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 60,
+          "clockDir": "cw",
+          "windTo": 239
+        },
+        "useFlow": "SOUTH"
+      }
+    ]
+  },
+  "KGJT": {
+    "flows": {
+      "EAST VMC": {
+        "name": "EAST VMC",
+        "depRwys": ["11"],
+        "arrRwys": ["29"]
+      },
+      "WEST VMC": {
+        "name": "WEST VMC",
+        "depRwys": ["11"],
+        "arrRwys": ["29"]
+      },
+      "EAST IMC": {
+        "name": "EAST IMC",
+        "depRwys": ["11"],
+        "arrRwys": ["29"]
+      },
+      "WEST IMC": {
+        "name": "WEST IMC",
+        "depRwys": ["11"],
+        "arrRwys": ["29"]
+      }
+    },
+    "rules": [
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 20,
+          "clockDir": "cw",
+          "windTo": 209
+        },
+        "useFlow": "EAST VMC"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 20,
+          "clockDir": "cw",
+          "windTo": 209
+        },
+        "useFlow": "EAST IMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 210,
+          "clockDir": "cw",
+          "windTo": 19
+        },
+        "useFlow": "WEST VMC"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 210,
+          "clockDir": "cw",
+          "windTo": 19
+        },
+        "useFlow": "WEST IMC"
+      }
+    ]
+  },
+  "KGUR": {
+    "flows": {
+      "32": {
+        "name": "32",
+        "depRwys": ["32"],
+        "arrRwys": ["32"]
+      },
+      "14": {
+        "name": "14",
+        "depRwys": ["14"],
+        "arrRwys": ["14"]
+      }
+    },
+    "rules": [
+      {
+        "conds": ["VFR", "MVFR", "IFR", "LIFR"],
+        "speedBounds": {
+          "minKts": 0,
+          "maxKts": 4
+        },
+        "useFlow": "32"
+      },
+      {
+        "conds": ["VFR", "MVFR", "IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 50,
+          "clockDir": "cw",
+          "windTo": 229
+        },
+        "speedBounds": {
+          "minKts": 5,
+          "maxKts": 200
+        },
+        "useFlow": "14"
+      },
+      {
+        "conds": ["VFR", "MVFR", "IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 230,
+          "clockDir": "cw",
+          "windTo": 49
+        },
+        "speedBounds": {
+          "minKts": 5,
+          "maxKts": 200
+        },
+        "useFlow": "32"
+      }
+    ]
+  },
+  "KPUB": {
+    "flows": {
+      "EAST VMC": {
+        "name": "EAST VMC",
+        "depRwys": ["8L", "8R"],
+        "arrRwys": ["8L", "8R"]
+      },
+      "WEST VMC": {
+        "name": "WEST VMC",
+        "depRwys": ["26L", "26R"],
+        "arrRwys": ["26L", "26R"]
+      },
+      "EAST IMC": {
+        "name": "EAST IMC",
+        "depRwys": ["8R"],
+        "arrRwys": ["8R"]
+      },
+      "WEST IMC": {
+        "name": "WEST IMC",
+        "depRwys": ["26L"],
+        "arrRwys": ["26L"]
+      }
+    },
+    "rules": [
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 350,
+          "clockDir": "cw",
+          "windTo": 179
+        },
+        "useFlow": "EAST VMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 180,
+          "clockDir": "cw",
+          "windTo": 349
+        },
+        "useFlow": "WEST VMC"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 350,
+          "clockDir": "cw",
+          "windTo": 179
+        },
+        "useFlow": "EAST IMC"
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "directionBounds": {
+          "windFrom": 180,
+          "clockDir": "cw",
+          "windTo": 349
+        },
+        "useFlow": "WEST IMC"
+      }
+    ]
+  },
+  "KRAP": {
+    "flows": {
+      "NORTH": {
+        "name": "NORTH",
+        "depRwys": ["32"],
+        "arrRwys": ["32"]
+      },
+      "SOUTH": {
+        "name": "SOUTH",
+        "depRwys": ["14"],
+        "arrRwys": ["14"]
+      }
+    },
+    "rules": [
+      {
+        "conds": ["IFR", "LIFR"],
+        "useFlow": "NORTH"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 50,
+          "clockDir": "ccw",
+          "windTo": 230
+        },
+        "useFlow": "NORTH"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 229,
+          "clockDir": "ccw",
+          "windTo": 49
+        },
+        "useFlow": "SOUTH"
+      }
+    ]
+  },
+  "KCPR": {
+    "flows": {
+      "EAST VMC": {
+        "name": "EAST VMC",
+        "depRwys": ["3"],
+        "arrRwys": ["3"]
+      },
+      "EAST IMC": {
+        "name": "EAST IMC",
+        "depRwys": ["3"],
+        "arrRwys": ["3"]
+      },
+      "WEST VMC": {
+        "name": "WEST VMC",
+        "depRwys": ["21"],
+        "arrRwys": ["21"]
+      },
+      "WEST IMC": {
+        "name": "WEST IMC",
+        "depRwys": ["21"],
+        "arrRwys": ["21"]
+      }
+    },
+    "rules": [
+      {
+        "conds": ["IFR", "LIFR"],
+        "useFlow": "EAST IMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 120,
+          "clockDir": "cw",
+          "windTo": 350
+        },
+        "useFlow": "WEST VMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 119,
+          "clockDir": "ccw",
+          "windTo": 351
+        },
+        "speedBounds": {
+          "minKts": 11,
+          "maxKts": 200
+        },
+        "useFlow": "WEST VMC"
       }
     ]
   }

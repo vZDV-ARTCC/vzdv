@@ -174,6 +174,30 @@ impl ConfigIDS {
         let config: ConfigIDS = serde_json::from_str(&text)?;
         Ok(config)
     }
+
+    pub fn validate(&self) -> Result<()> {
+        for (icao, entry) in self.0.iter() {
+            // Check that all flow keys match their name field
+            if let Some((bad_flow_name, bad_flow)) = entry.flows.iter().find(|f| *f.0 != f.1.name) {
+                bail!(
+                    "{bad_flow_name} flow name ({}) does not match for {icao}",
+                    bad_flow.name
+                )
+            }
+            // Check that every rule mentions a flow present in `flows`
+            if let Some(bad_rule) = entry
+                .rules
+                .iter()
+                .find(|r| entry.flows.get(&r.use_flow).is_none())
+            {
+                bail!(
+                    "Rule in {icao} references a flow that is not present in flows field! Rule: {bad_rule:?}"
+                )
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Config {

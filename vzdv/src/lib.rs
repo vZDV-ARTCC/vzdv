@@ -457,6 +457,10 @@ pub async fn general_setup(
             std::process::exit(1);
         }
     };
+    if let Err(e) = ids_config.validate() {
+        error!("IDS Config validation error: {e}");
+        std::process::exit(1);
+    }
     debug!("Creating DB connection");
     let db = match load_db(&config).await {
         Ok(db) => db,
