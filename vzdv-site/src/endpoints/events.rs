@@ -18,6 +18,7 @@ use axum::{
     routing::{get, post},
 };
 use chrono::Utc;
+use itertools::Itertools;
 use log::debug;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
@@ -261,6 +262,7 @@ async fn page_event(
                 ),
             )
         })
+        .sorted_by(|a, b| a.1.cmp(&b.1))
         .collect();
     let template = state.templates.get_template("events/event.jinja")?;
     let self_register: Option<EventRegistration> = if let Some(user_info) = &user_info {
