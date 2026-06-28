@@ -135,10 +135,10 @@ async fn tick(config: &Arc<Config>, db: &Pool<Sqlite>, http: &Arc<Client>) -> Re
     }
     let cid_name_map = get_controller_cids_and_names(db).await?;
     for entry in &entries {
-        if !entry.notified {
-            if let Err(e) = handle_single(entry, &entries, &cid_name_map, config, db, http).await {
-                error!("Error processing no-show tick for entry {}: {e}", entry.id);
-            }
+        if !entry.notified
+            && let Err(e) = handle_single(entry, &entries, &cid_name_map, config, db, http).await
+        {
+            error!("Error processing no-show tick for entry {}: {e}", entry.id);
         }
     }
 

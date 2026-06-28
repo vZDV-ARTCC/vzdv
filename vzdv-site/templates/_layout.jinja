@@ -62,6 +62,9 @@
                   <li><a class="dropdown-item" href="/airspace/flights">Flights</a></li>
                   <li><a class="dropdown-item" href="/airspace/weather">Weather</a></li>
                   <li><a class="dropdown-item" href="/airspace/staffing_request">Staffing Request</a></li>
+                  {% if user_info %}
+                    <li><a class="dropdown-item" href="/ids">IDS</a></li>
+                  {% endif %}
                   <li><hr class="dropdown-divider"></li>
                   <li>
                     <a href="https://www.simbrief.com" class="dropdown-item" target="_blank">SimBrief</a>

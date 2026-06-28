@@ -4,16 +4,87 @@
 
 {% block body %}
 
-<h1>IDS</h1>
+<h2>vZDV IDS</h2>
 
-{% if atis|length > 0 %}
-  <ul>
-    {% for entry in atis %}
-      <li>{{ entry.facility }} {{ atis_type }} {{ atis_letter }}</li>
-    {% endfor %}
-  </ul>
+{% if rows|length > 0 %}
+  <table class="table table-striped table-hover sortable">
+    <thead>
+      <tr>
+        <th>Airport</th>
+        <th>Departure Runways</th>
+        <th>Arrival Runways</th>
+        <th>Flow</th>
+        <th>ATIS</th>
+        <th>Conditions</th>
+        <th>Wind</th>
+        <th>METAR</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          <td><strong>{{ row.icao }}</strong></td>
+          <td>
+            {% if row.dep_rwys %}
+              {{ row.dep_rwys }}
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.arr_rwys %}
+              {{ row.arr_rwys }}
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.error %}
+              <span class="badge text-bg-warning">{{ row.error }}</span>
+            {% elif row.is_split %}
+              <span class="text-muted">D-ATIS: {{ row.dep_name or "—" }}</span>
+              <br>
+              <span class="text-muted">A-ATIS: {{ row.arr_name or "—" }}</span>
+            {% else %}
+              {{ row.flow_name or "—" }}
+            {% endif %}
+          </td>
+          <td>{{ row.atis_info }}</td>
+          <td>
+            {% if row.conditions == 'VFR' %}
+              <span class="badge rounded-pill text-bg-success">{{ row.conditions }}</span>
+            {% elif row.conditions == 'MVFR' %}
+              <span class="badge rounded-pill text-bg-info">{{ row.conditions }}</span>
+            {% elif row.conditions == 'IFR' %}
+              <span class="badge rounded-pill text-bg-danger">{{ row.conditions }}</span>
+            {% elif row.conditions == 'LIFR' %}
+              <span class="badge rounded-pill" style="background-color: purple;">{{ row.conditions }}</span>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.wind %}
+              {{ row.wind }}
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.raw_metar %}
+              <span class="font-monospace small">{{ row.raw_metar }}</span>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 {% else %}
-  <h4>No current ATIS data</h4>
+  <h4>No IDS airport data configured</h4>
 {% endif %}
+
+<script src="/static/sorttable.js"></script>
 
 {% endblock %}

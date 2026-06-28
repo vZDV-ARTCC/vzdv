@@ -693,19 +693,19 @@ async fn api_delete_staff_note(
         .bind(note_id)
         .fetch_optional(&state.db)
         .await?;
-    if let Some(note) = note {
-        if note.by == user_info.cid {
-            sqlx::query(sql::DELETE_STAFF_NOTE)
-                .bind(note_id)
-                .execute(&state.db)
-                .await?;
-            record_log(
-                format!("{} removed their note #{}", user_info.cid, note_id),
-                &state.db,
-                true,
-            )
+    if let Some(note) = note
+        && note.by == user_info.cid
+    {
+        sqlx::query(sql::DELETE_STAFF_NOTE)
+            .bind(note_id)
+            .execute(&state.db)
             .await?;
-        }
+        record_log(
+            format!("{} removed their note #{}", user_info.cid, note_id),
+            &state.db,
+            true,
+        )
+        .await?;
     }
     Ok(StatusCode::OK)
 }

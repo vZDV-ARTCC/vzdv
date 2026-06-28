@@ -1,32 +1,168 @@
 {
   "KDEN": {
-    "flows": {
-      "NORTH CALM": {
-        "name": "NORTH CALM",
-        "depRwys": ["8", "25", "34L"],
-        "arrRwys": ["34R", "35L", "35R"]
-      },
-      "SOUTH CALM": {
-        "name": "SOUTH CALM",
-        "depRwys": ["8", "25", "17L"],
-        "arrRwys": ["16L", "16R", "17R"]
-      },
-      "SOUTH EAST": {
-        "name": "SOUTH EAST",
-        "depRwys": ["8", "17L"],
-        "arrRwys": ["7", "16L", "16R", "17R"]
-      },
-      "SOUTH WEST (VMC)": {
-        "name": "SOUTH WEST (VMC)",
-        "depRwys": ["17L", "16R", "26"],
-        "arrRwys": [""]
-      }
+    "type": "split",
+    "depFlows": {
+      "SOUTH CALM": { "rwys": ["8", "17L", "25"] },
+      "NORTH CALM": { "rwys": ["8", "25", "34L"] },
+      "SOUTH EAST": { "rwys": ["8", "17L", "17R"] },
+      "SOUTH WEST (VMC)": { "rwys": ["17L", "25"] },
+      "SOUTH WEST (IMC)": { "rwys": ["16L", "25"] },
+      "NORTH EAST": { "rwys": ["8", "34L"] },
+      "NORTH WEST": { "rwys": ["25", "34L"] },
+      "SOUTH ALL": { "rwys": ["16L", "17L"] },
+      "NORTH ALL": { "rwys": ["34L", "34R"] },
+      "EAST ALL": { "rwys": ["8"] },
+      "WEST ALL": { "rwys": ["25"] },
+      "HONEY BADGER (ARR)": { "rwys": ["8", "25"] },
+      "HONEY BADGER (DEP)": { "rwys": ["17L", "17R", "34L", "34R"] }
+    },
+    "arrFlows": {
+      "SOUTH CALM": { "rwys": ["16L", "16R", "17R"] },
+      "NORTH CALM": { "rwys": ["34R", "35L", "35R"] },
+      "SOUTH IMC": { "rwys": ["16R", "17L", "17R"] },
+      "NORTH IMC": { "rwys": ["34R", "35L", "35R"] },
+      "SOUTH EAST": { "rwys": ["7", "16L", "16R", "17R"] },
+      "SOUTH WEST": { "rwys": ["16L", "16R", "17R", "26"] },
+      "NORTH EAST": { "rwys": ["7", "34R", "35L", "35R"] },
+      "NORTH WEST": { "rwys": ["26", "34R", "35L", "35R"] },
+      "SOUTH ALL (VMC)": { "rwys": ["16L", "16R", "17R"] },
+      "NORTH ALL (VMC)": { "rwys": ["34R", "35L", "35R"] },
+      "EAST ALL": { "rwys": ["7", "8"] },
+      "WEST ALL": { "rwys": ["25", "26"] },
+      "HONEY BADGER (ARR)": { "rwys": ["16L", "16R", "35L", "35R"] },
+      "HONEY BADGER (DEP)": { "rwys": ["7", "26"] }
     },
     "rules": [
-
+      {
+        "conds": ["VFR", "MVFR"],
+        "useDepFlow": "SOUTH CALM",
+        "useArrFlow": "SOUTH CALM",
+        "directionBounds": { "windFrom": 80, "clockDir": "cw", "windTo": 259 },
+        "speedBounds": { "minKts": 0, "maxKts": 10 }
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "useDepFlow": "SOUTH CALM",
+        "useArrFlow": "SOUTH IMC",
+        "directionBounds": { "windFrom": 80, "clockDir": "cw", "windTo": 259 },
+        "speedBounds": { "minKts": 0, "maxKts": 10 }
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "useDepFlow": "NORTH CALM",
+        "useArrFlow": "NORTH CALM",
+        "directionBounds": { "windFrom": 260, "clockDir": "cw", "windTo": 79 },
+        "speedBounds": { "minKts": 0, "maxKts": 10 }
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "useDepFlow": "NORTH CALM",
+        "useArrFlow": "NORTH IMC",
+        "directionBounds": { "windFrom": 260, "clockDir": "cw", "windTo": 79 },
+        "speedBounds": { "minKts": 0, "maxKts": 10 }
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "useDepFlow": "NORTH EAST",
+        "useArrFlow": "NORTH EAST",
+        "directionBounds": { "windFrom": 350, "clockDir": "cw", "windTo": 79 },
+        "speedBounds": { "minKts": 11, "maxKts": 25 }
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "useDepFlow": "NORTH EAST",
+        "useArrFlow": "NORTH IMC",
+        "directionBounds": { "windFrom": 350, "clockDir": "cw", "windTo": 79 },
+        "speedBounds": { "minKts": 11, "maxKts": 25 }
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "useDepFlow": "SOUTH EAST",
+        "useArrFlow": "SOUTH EAST",
+        "directionBounds": { "windFrom": 80, "clockDir": "cw", "windTo": 169 },
+        "speedBounds": { "minKts": 11, "maxKts": 25 }
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "useDepFlow": "SOUTH EAST",
+        "useArrFlow": "SOUTH IMC",
+        "directionBounds": { "windFrom": 80, "clockDir": "cw", "windTo": 169 },
+        "speedBounds": { "minKts": 11, "maxKts": 25 }
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "useDepFlow": "SOUTH WEST (VMC)",
+        "useArrFlow": "SOUTH WEST",
+        "directionBounds": { "windFrom": 170, "clockDir": "cw", "windTo": 259 },
+        "speedBounds": { "minKts": 11, "maxKts": 25 }
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "useDepFlow": "SOUTH WEST (IMC)",
+        "useArrFlow": "SOUTH WEST",
+        "directionBounds": { "windFrom": 170, "clockDir": "cw", "windTo": 259 },
+        "speedBounds": { "minKts": 11, "maxKts": 25 }
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "useDepFlow": "NORTH WEST",
+        "useArrFlow": "NORTH WEST",
+        "directionBounds": { "windFrom": 260, "clockDir": "cw", "windTo": 349 },
+        "speedBounds": { "minKts": 11, "maxKts": 25 }
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "useDepFlow": "NORTH WEST",
+        "useArrFlow": "NORTH IMC",
+        "directionBounds": { "windFrom": 260, "clockDir": "cw", "windTo": 349 },
+        "speedBounds": { "minKts": 11, "maxKts": 25 }
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "useDepFlow": "NORTH ALL",
+        "useArrFlow": "NORTH ALL (VMC)",
+        "directionBounds": { "windFrom": 300, "clockDir": "cw", "windTo": 39 },
+        "speedBounds": { "minKts": 26, "maxKts": 200 }
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "useDepFlow": "NORTH ALL",
+        "useArrFlow": "NORTH IMC",
+        "directionBounds": { "windFrom": 300, "clockDir": "cw", "windTo": 39 },
+        "speedBounds": { "minKts": 26, "maxKts": 200 }
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "useDepFlow": "SOUTH ALL",
+        "useArrFlow": "SOUTH ALL (VMC)",
+        "directionBounds": { "windFrom": 120, "clockDir": "cw", "windTo": 219 },
+        "speedBounds": { "minKts": 26, "maxKts": 200 }
+      },
+      {
+        "conds": ["IFR", "LIFR"],
+        "useDepFlow": "SOUTH ALL",
+        "useArrFlow": "SOUTH IMC",
+        "directionBounds": { "windFrom": 120, "clockDir": "cw", "windTo": 219 },
+        "speedBounds": { "minKts": 26, "maxKts": 200 }
+      },
+      {
+        "conds": ["VFR", "MVFR", "IFR", "LIFR"],
+        "useDepFlow": "EAST ALL",
+        "useArrFlow": "EAST ALL",
+        "directionBounds": { "windFrom": 40, "clockDir": "cw", "windTo": 119 },
+        "speedBounds": { "minKts": 26, "maxKts": 200 }
+      },
+      {
+        "conds": ["VFR", "MVFR", "IFR", "LIFR"],
+        "useDepFlow": "WEST ALL",
+        "useArrFlow": "WEST ALL",
+        "directionBounds": { "windFrom": 220, "clockDir": "cw", "windTo": 299 },
+        "speedBounds": { "minKts": 26, "maxKts": 200 }
+      }
     ]
   },
   "KAPA": {
+    "type": "combined",
     "flows": {
       "SOUTH VMC": {
         "name": "SOUTH VMC",
@@ -99,6 +235,7 @@
     ]
   },
   "KASE": {
+    "type": "combined",
     "flows": {
       "VMC": {
         "name": "VMC",
@@ -203,6 +340,7 @@
     ]
   },
   "KBJC": {
+    "type": "combined",
     "flows": {
       "WEST VMC": {
         "name": "WEST VMC",
@@ -275,6 +413,7 @@
     ]
   },
   "KCFO": {
+    "type": "combined",
     "flows": {
       "SOUTH VMC": {
         "name": "SOUTH VMC",
@@ -347,6 +486,7 @@
     ]
   },
   "KCOS": {
+    "type": "combined",
     "flows": {
       "NORTH VMC": {
         "name": "NORTH VMC",
@@ -419,6 +559,7 @@
     ]
   },
   "KCYS": {
+    "type": "combined",
     "flows": {
       "WEST VMC": {
         "name": "WEST VMC",
@@ -491,6 +632,7 @@
     ]
   },
   "KEGE": {
+    "type": "combined",
     "flows": {
       "WEST": {
         "name": "WEST",
@@ -506,6 +648,7 @@
     ]
   },
   "KFMN": {
+    "type": "combined",
     "flows": {
       "WEST VMC": {
         "name": "WEST VMC",
@@ -578,6 +721,7 @@
     ]
   },
   "KFNL": {
+    "type": "combined",
     "flows": {
       "NORTH": {
         "name": "NORTH",
@@ -626,6 +770,7 @@
     ]
   },
   "KGJT": {
+    "type": "combined",
     "flows": {
       "EAST VMC": {
         "name": "EAST VMC",
@@ -688,6 +833,7 @@
     ]
   },
   "KGUR": {
+    "type": "combined",
     "flows": {
       "32": {
         "name": "32",
@@ -738,6 +884,7 @@
     ]
   },
   "KPUB": {
+    "type": "combined",
     "flows": {
       "EAST VMC": {
         "name": "EAST VMC",
@@ -800,6 +947,7 @@
     ]
   },
   "KRAP": {
+    "type": "combined",
     "flows": {
       "NORTH": {
         "name": "NORTH",
@@ -838,6 +986,7 @@
     ]
   },
   "KCPR": {
+    "type": "combined",
     "flows": {
       "EAST VMC": {
         "name": "EAST VMC",

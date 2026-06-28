@@ -1,9 +1,5 @@
 //! vZDV website
 
-#![deny(clippy::all)]
-#![allow(clippy::collapsible_if)]
-#![deny(unsafe_code)]
-
 use axum::{Router, middleware as axum_middleware};
 use clap::Parser;
 use log::{debug, error, info, warn};

@@ -1,9 +1,5 @@
 //! vZDV Discord bot.
 
-#![deny(clippy::all)]
-#![allow(clippy::collapsible_if)]
-#![deny(unsafe_code)]
-
 use anyhow::Result;
 use base64::{Engine as _, engine::general_purpose};
 use clap::Parser;

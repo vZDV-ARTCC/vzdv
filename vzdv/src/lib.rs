@@ -1,8 +1,5 @@
 //! vZDV site/tasks/bot core and shared logic.
 
-#![deny(clippy::all)]
-#![deny(unsafe_code)]
-
 use anyhow::{Result, anyhow, bail};
 use config::Config;
 use db::load_db;

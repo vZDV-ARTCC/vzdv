@@ -1,8 +1,5 @@
 //! vZDV website background task runner.
 
-#![deny(clippy::all)]
-#![deny(unsafe_code)]
-
 use clap::Parser;
 use clokwerk::{AsyncScheduler, TimeUnits};
 use log::{debug, error, info};

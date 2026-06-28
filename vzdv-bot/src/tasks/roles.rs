@@ -27,11 +27,11 @@ async fn set_nickname(
         controller.first_name,
         controller.last_name.chars().next().unwrap()
     );
-    if let Some(ois) = &controller.operating_initials {
-        if !ois.is_empty() {
-            name.push_str(" - ");
-            name.push_str(ois);
-        }
+    if let Some(ois) = &controller.operating_initials
+        && !ois.is_empty()
+    {
+        name.push_str(" - ");
+        name.push_str(ois);
     }
 
     let is_vatusa_vatgov = member
