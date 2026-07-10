@@ -236,6 +236,7 @@ struct AirportDetail {
     icao: String,
     dep_flow: Option<String>,
     arr_flow: Option<String>,
+    suggested_flow: Option<String>,
     dep_rows: Vec<DepRow>,
     arr_rows: Vec<ArrRow>,
     error: Option<String>,
@@ -327,6 +328,7 @@ async fn page_airport(
                 }
             }
         };
+        let suggested_flow = weather.and_then(|w| procedure.suggest_flow(w));
 
         match resolved {
             Some(flow) => {
@@ -343,6 +345,7 @@ async fn page_airport(
                     icao: icao.clone(),
                     dep_flow: flow.dep_name.clone(),
                     arr_flow: flow.arr_name.clone(),
+                    suggested_flow,
                     dep_rows,
                     arr_rows: build_arr_rows(&flow.arr_rwys),
                     error: dep_error,
@@ -352,6 +355,7 @@ async fn page_airport(
                 icao: icao.clone(),
                 dep_flow: None,
                 arr_flow: None,
+                suggested_flow,
                 dep_rows: vec![],
                 arr_rows: vec![],
                 error: error.or_else(|| Some("Could not determine flow".to_string())),
@@ -362,6 +366,7 @@ async fn page_airport(
             icao: icao.clone(),
             dep_flow: None,
             arr_flow: None,
+            suggested_flow: None,
             dep_rows: vec![],
             arr_rows: vec![],
             error: Some(format!("{icao} is not configured in the IDS")),

@@ -1524,10 +1524,23 @@
           "windTo": 351
         },
         "speedBounds": {
+          "minKts": 0,
+          "maxKts": 10
+        },
+        "useFlow": "WEST VMC"
+      },
+      {
+        "conds": ["VFR", "MVFR"],
+        "directionBounds": {
+          "windFrom": 119,
+          "clockDir": "ccw",
+          "windTo": 351
+        },
+        "speedBounds": {
           "minKts": 11,
           "maxKts": 200
         },
-        "useFlow": "WEST VMC"
+        "useFlow": "EAST VMC"
       }
     ]
   }

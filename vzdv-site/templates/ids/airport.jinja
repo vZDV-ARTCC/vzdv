@@ -11,6 +11,14 @@
   <div class="alert alert-warning">{{ detail.error }}</div>
 {% else %}
 
+{% if detail.suggested_flow %}
+  <div class="mb-3">
+    <span class="badge text-bg-info" data-bs-toggle="tooltip" data-bs-title="Determined based on current DEN SOP and winds">
+      Suggested Flow: {{ detail.suggested_flow }}
+    </span>
+  </div>
+{% endif %}
+
 <div class="row g-4">
 
   <div class="col-12 col-xl-6">

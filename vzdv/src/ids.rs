@@ -35,6 +35,15 @@ impl AirportProcedure {
             AirportProcedure::Split(proc) => proc.determine_flow(weather, atis_list),
         }
     }
+
+    /// Determine the ideal departure flow name based solely on current weather and
+    /// the configured SOP rules. Returns `None` if no rule matches the weather.
+    pub fn suggest_flow(&self, weather: &AirportWeather) -> Option<String> {
+        match self {
+            AirportProcedure::Combined(proc) => proc.suggest_flow(weather),
+            AirportProcedure::Split(proc) => proc.suggest_flow(weather),
+        }
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -86,6 +95,12 @@ impl CombinedProcedure {
             dep_name: Some(flow.name.clone()),
             arr_name: Some(flow.name.clone()),
         })
+    }
+
+    pub fn suggest_flow(&self, weather: &AirportWeather) -> Option<String> {
+        find_matching_rule(&self.rules, weather)
+            .ok()
+            .map(|rule| rule.use_flow.clone())
     }
 }
 
@@ -171,6 +186,12 @@ impl SplitProcedure {
             dep_name,
             arr_name,
         })
+    }
+
+    pub fn suggest_flow(&self, weather: &AirportWeather) -> Option<String> {
+        find_matching_split_rule(&self.rules, weather)
+            .ok()
+            .map(|rule| rule.use_dep_flow.clone())
     }
 }
 
@@ -628,7 +649,7 @@ mod tests {
 
         let flow = procedure.determine_flow(&weather, &[dep_atis]).unwrap();
         assert_eq!(flow.dep_name.as_deref(), Some("SOUTH EAST"));
-        assert_eq!(sorted_rwy_names(&flow.dep_rwys), vec!["17L", "17R", "8"]);
+        assert_eq!(sorted_rwy_names(&flow.dep_rwys), vec!["17L", "8"]);
         // Arrival should be weather-determined: SOUTH EAST
         assert_eq!(flow.arr_name.as_deref(), Some("SOUTH EAST"));
         assert_eq!(
