@@ -1,0 +1,52 @@
+{% extends "_layout.jinja" %}
+
+{% block title %}{{ detail.icao }} IDS | {{ super() }}{% endblock %}
+
+{% block body %}
+
+<h2>{{ detail.icao }} — IDS Detail</h2>
+<p><a href="/ids">&larr; Back to IDS</a></p>
+
+{% if detail.error %}
+  <div class="alert alert-warning">{{ detail.error }}</div>
+{% else %}
+
+<div class="row g-4">
+
+  <div class="col-12 col-xl-6">
+    <h4>Departures <small class="text-muted fs-6">{{ detail.dep_flow or "—" }}</small></h4>
+    {% if detail.dep_rows|length > 0 %}
+      <table class="table table-bordered table-sm align-middle">
+        <thead class="table-dark">
+          <tr>
+            <th style="width: 6rem;">Direction</th>
+            <th style="width: 5rem;">Runway</th>
+            <th>Gates</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in detail.dep_rows %}
+            <tr>
+              <td class="fw-bold text-center align-middle">{{ row.direction }}</td>
+              <td class="fw-bold text-center align-middle fs-5">{{ row.rwy }}</td>
+              <td>
+                {% if row.gates|length > 0 %}
+                  {{ row.gates|join(' ') }}
+                {% else %}
+                  <span class="text-muted">No gates assigned</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="text-muted">No departure runway data.</p>
+    {% endif %}
+  </div>
+
+</div>
+
+{% endif %}
+
+{% endblock %}

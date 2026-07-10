@@ -1,163 +1,656 @@
 {
   "KDEN": {
     "type": "split",
+    "depCorridors": {
+      "EEONS": {
+        "direction": "East",
+        "gates": ["EEONS", "HCT", "AKO", "ASHBY"]
+      },
+      "EMMYS": {
+        "direction": "East",
+        "gates": ["EMMYS", "MCK", "BELKE"]
+      },
+      "EXTAN": {
+        "direction": "East",
+        "gates": ["EXTAN", "GLD", "TXC", "CABET"]
+      },
+      "EPKEE": {
+        "direction": "East",
+        "gates": ["EPKEE", "GCK", "WEEDS"]
+      },
+      "SMMUR": {
+        "direction": "South",
+        "gates": ["SMMUR", "ALS"]
+      },
+      "SUDDZ": {
+        "direction": "South",
+        "gates": ["SUDDZ"]
+      },
+      "SABTH": {
+        "direction": "South",
+        "gates": ["SABTH"]
+      },
+      "SLEEK": {
+        "direction": "South",
+        "gates": ["SLEEK", "V389", "COS", "PUB"]
+      },
+      "ZIMMR": {
+        "direction": "West",
+        "gates": ["ZIMMR", "EKR", "RLG"]
+      },
+      "COORZ": {
+        "direction": "West",
+        "gates": ["COORZ", "OAL", "TRUEL", "VOAXA"]
+      },
+      "CONNR": {
+        "direction": "West",
+        "gates": ["CONNR", "DBL"]
+      },
+      "BAYLR": {
+        "direction": "West",
+        "gates": ["BAYLR", "BOBBA", "DVC", "HBU", "MTJ"]
+      },
+      "DDRTH": {
+        "direction": "North",
+        "gates": ["DDRTH", "LAR", "MBW", "NATTI"]
+      },
+      "XXWNG": {
+        "direction": "North",
+        "gates": ["XXWNG", "CYS"]
+      },
+      "HHOTH": {
+        "direction": "North",
+        "gates": ["HHOTH", "RAP", "GLL"]
+      },
+      "CHUWY": {
+        "direction": "North",
+        "gates": ["CHUWY", "HANKI", "BFF"]
+      }
+    },
     "depFlows": {
-      "SOUTH CALM": { "rwys": ["8", "17L", "25"] },
-      "NORTH CALM": { "rwys": ["8", "25", "34L"] },
-      "SOUTH EAST": { "rwys": ["8", "17L", "17R"] },
-      "SOUTH WEST (VMC)": { "rwys": ["17L", "25"] },
-      "SOUTH WEST (IMC)": { "rwys": ["16L", "25"] },
-      "NORTH EAST": { "rwys": ["8", "34L"] },
-      "NORTH WEST": { "rwys": ["25", "34L"] },
-      "SOUTH ALL": { "rwys": ["16L", "17L"] },
-      "NORTH ALL": { "rwys": ["34L", "34R"] },
-      "EAST ALL": { "rwys": ["8"] },
-      "WEST ALL": { "rwys": ["25"] },
-      "HONEY BADGER (ARR)": { "rwys": ["8", "25"] },
-      "HONEY BADGER (DEP)": { "rwys": ["17L", "17R", "34L", "34R"] }
+      "NORTH CALM": {
+        "rwys": {
+          "8": ["EEONS", "EMMYS", "EXTAN", "EPKEE", "SABTH", "SLEEK"],
+          "25": ["ZIMMR", "COORZ", "CONNR", "BAYLR", "SMMUR", "SUDDZ"],
+          "34L": ["DDRTH", "XXWNG", "HHOTH", "CHUWY"]
+        }
+      },
+      "SOUTH CALM": {
+        "rwys": {
+          "8": ["EEONS", "EMMYS", "EXTAN", "EPKEE", "HHOTH", "CHUWY"],
+          "25": ["ZIMMR", "COORZ", "CONNR", "BAYLR", "DDRTH", "XXWNG"],
+          "17L": ["SMMUR", "SUDDZ", "SABTH", "SLEEK"]
+        }
+      },
+      "NORTH EAST": {
+        "rwys": {
+          "8": [
+            "EEONS",
+            "EMMYS",
+            "EXTAN",
+            "EPKEE",
+            "SMMUR",
+            "SUDDZ",
+            "SABTH",
+            "SLEEK"
+          ],
+          "34L": [
+            "DDRTH",
+            "XXWNG",
+            "HHOTH",
+            "CHUWY",
+            "ZIMMR",
+            "COORZ",
+            "CONNR",
+            "BAYLR"
+          ]
+        }
+      },
+      "NORTH WEST": {
+        "rwys": {
+          "25": [
+            "ZIMMR",
+            "COORZ",
+            "CONNR",
+            "BAYLR",
+            "SMMUR",
+            "SUDDZ",
+            "SABTH",
+            "SLEEK"
+          ],
+          "34L": [
+            "DDRTH",
+            "XXWNG",
+            "HHOTH",
+            "CHUWY",
+            "EEONS",
+            "EMMYS",
+            "EXTAN",
+            "EPKEE"
+          ]
+        }
+      },
+      "SOUTH EAST": {
+        "rwys": {
+          "8": [
+            "EEONS",
+            "EMMYS",
+            "EXTAN",
+            "EPKEE",
+            "DDRTH",
+            "XXWNG",
+            "HHOTH",
+            "CHUWY"
+          ],
+          "17L": [
+            "SMMUR",
+            "SUDDZ",
+            "SABTH",
+            "SLEEK",
+            "ZIMMR",
+            "COORZ",
+            "CONNR",
+            "BAYLR"
+          ]
+        }
+      },
+      "SOUTH WEST (VMC)": {
+        "rwys": {
+          "25": ["DDRTH", "XXWNG", "HHOTH", "CHUWY", "ZIMMR", "COORZ", "CONNR"],
+          "17L": ["EEONS", "EMMYS", "EXTAN", "EPKEE"],
+          "17R": ["SMMUR", "SUDDZ", "SABTH", "SLEEK", "BAYLR"]
+        }
+      },
+      "SOUTH WEST (IMC)": {
+        "rwys": {
+          "25": [
+            "ZIMMR",
+            "COORZ",
+            "CONNR",
+            "BAYLR",
+            "DDRTH",
+            "XXWNG",
+            "HHOTH",
+            "CHUWY"
+          ],
+          "16L": [
+            "EEONS",
+            "EMMYS",
+            "EXTAN",
+            "EPKEE",
+            "SMMUR",
+            "SUDDZ",
+            "SABTH",
+            "SLEEK"
+          ]
+        }
+      },
+      "NORTH ALL": {
+        "rwys": {
+          "34L": [
+            "ZIMMR",
+            "COORZ",
+            "CONNR",
+            "BAYLR",
+            "DDRTH",
+            "XXWNG",
+            "HHOTH",
+            "CHUWY",
+            "SMMUR",
+            "SUDDZ"
+          ],
+          "34R": ["EEONS", "EMMYS", "EXTAN", "EPKEE", "SABTH", "SLEEK"]
+        }
+      },
+      "SOUTH ALL": {
+        "rwys": {
+          "16L": ["ZIMMR", "COORZ", "CONNR", "BAYLR", "DDRTH", "XXWNG"],
+          "17L": [
+            "SMMUR",
+            "SUDDZ",
+            "SABTH",
+            "SLEEK",
+            "HHOTH",
+            "CHUWY",
+            "EEONS",
+            "EMMYS",
+            "EXTAN",
+            "EPKEE"
+          ]
+        }
+      },
+      "EAST ALL": {
+        "rwys": {
+          "8": [
+            "EEONS",
+            "EMMYS",
+            "EXTAN",
+            "EPKEE",
+            "DDRTH",
+            "XXWNG",
+            "HHOTH",
+            "CHUWY",
+            "ZIMMR",
+            "COORZ",
+            "CONNR",
+            "BAYLR",
+            "SMMUR",
+            "SUDDZ",
+            "SABTH",
+            "SLEEK"
+          ]
+        }
+      },
+      "WEST ALL": {
+        "rwys": {
+          "25": [
+            "BAYLR",
+            "COORZ",
+            "CONNR",
+            "ZIMMR",
+            "SMMUR",
+            "SUDDZ",
+            "SABTH",
+            "SLEEK",
+            "EEONS",
+            "EMMYS",
+            "EXTAN",
+            "EPKEE",
+            "DDRTH",
+            "XXWNG",
+            "HHOTH",
+            "CHUWY"
+          ]
+        }
+      },
+      "HONEY BADGER (ARR)": {
+        "rwys": {
+          "8": [
+            "EEONS",
+            "EMMYS",
+            "EXTAN",
+            "EPKEE",
+            "HHOTH",
+            "CHUWY",
+            "SABTH",
+            "SLEEK"
+          ],
+          "25": [
+            "BAYLR",
+            "COORZ",
+            "CONNR",
+            "ZIMMR",
+            "DDRTH",
+            "XXWNG",
+            "SMMUR",
+            "SUDDZ"
+          ]
+        }
+      },
+      "HONEY BADGER (DEP)": {
+        "rwys": {
+          "17L": ["SMMUR", "SUDDZ", "SABTH", "SLEEK", "EXTAN", "EPKEE"],
+          "17R": ["BAYLR", "CONNR"],
+          "34L": ["DDRTH", "XXWNG", "HHOTH", "CHUWY", "ZIMMR", "COORZ"],
+          "34R": ["EEONS", "EMMYS"]
+        }
+      }
     },
     "arrFlows": {
-      "SOUTH CALM": { "rwys": ["16L", "16R", "17R"] },
-      "NORTH CALM": { "rwys": ["34R", "35L", "35R"] },
-      "SOUTH IMC": { "rwys": ["16R", "17L", "17R"] },
-      "NORTH IMC": { "rwys": ["34R", "35L", "35R"] },
-      "SOUTH EAST": { "rwys": ["7", "16L", "16R", "17R"] },
-      "SOUTH WEST": { "rwys": ["16L", "16R", "17R", "26"] },
-      "NORTH EAST": { "rwys": ["7", "34R", "35L", "35R"] },
-      "NORTH WEST": { "rwys": ["26", "34R", "35L", "35R"] },
-      "SOUTH ALL (VMC)": { "rwys": ["16L", "16R", "17R"] },
-      "NORTH ALL (VMC)": { "rwys": ["34R", "35L", "35R"] },
-      "EAST ALL": { "rwys": ["7", "8"] },
-      "WEST ALL": { "rwys": ["25", "26"] },
-      "HONEY BADGER (ARR)": { "rwys": ["16L", "16R", "35L", "35R"] },
-      "HONEY BADGER (DEP)": { "rwys": ["7", "26"] }
+      "SOUTH CALM": {
+        "rwys": {
+          "16L": [],
+          "16R": [],
+          "17R": []
+        }
+      },
+      "NORTH CALM": {
+        "rwys": {
+          "34R": [],
+          "35L": [],
+          "35R": []
+        }
+      },
+      "SOUTH IMC": {
+        "rwys": {
+          "16R": [],
+          "17L": [],
+          "17R": []
+        }
+      },
+      "NORTH IMC": {
+        "rwys": {
+          "34R": [],
+          "35L": [],
+          "35R": []
+        }
+      },
+      "SOUTH EAST": {
+        "rwys": {
+          "7": [],
+          "16L": [],
+          "16R": [],
+          "17R": []
+        }
+      },
+
+      "SOUTH WEST": {
+        "rwys": {
+          "16L": [],
+          "16R": [],
+          "17R": [],
+          "26": []
+        }
+      },
+      "NORTH EAST": {
+        "rwys": {
+          "7": [],
+          "34R": [],
+          "35L": [],
+          "35R": []
+        }
+      },
+      "NORTH WEST": {
+        "rwys": {
+          "26": [],
+          "34R": [],
+          "35L": [],
+          "35R": []
+        }
+      },
+      "SOUTH ALL (VMC)": {
+        "rwys": {
+          "16L": [],
+          "16R": [],
+          "17R": []
+        }
+      },
+      "NORTH ALL (VMC)": {
+        "rwys": {
+          "34R": [],
+          "35L": [],
+          "35R": []
+        }
+      },
+      "EAST ALL": {
+        "rwys": {
+          "7": [],
+          "8": []
+        }
+      },
+      "WEST ALL": {
+        "rwys": {
+          "25": [],
+          "26": []
+        }
+      },
+      "HONEY BADGER (ARR)": {
+        "rwys": {
+          "16L": [],
+          "16R": [],
+          "35L": [],
+          "35R": []
+        }
+      },
+      "HONEY BADGER (DEP)": {
+        "rwys": {
+          "7": [],
+          "26": []
+        }
+      }
     },
     "rules": [
       {
         "conds": ["VFR", "MVFR"],
         "useDepFlow": "SOUTH CALM",
         "useArrFlow": "SOUTH CALM",
-        "directionBounds": { "windFrom": 80, "clockDir": "cw", "windTo": 259 },
-        "speedBounds": { "minKts": 0, "maxKts": 10 }
+        "directionBounds": {
+          "windFrom": 80,
+          "clockDir": "cw",
+          "windTo": 259
+        },
+        "speedBounds": {
+          "minKts": 0,
+          "maxKts": 10
+        }
       },
       {
         "conds": ["IFR", "LIFR"],
         "useDepFlow": "SOUTH CALM",
         "useArrFlow": "SOUTH IMC",
-        "directionBounds": { "windFrom": 80, "clockDir": "cw", "windTo": 259 },
-        "speedBounds": { "minKts": 0, "maxKts": 10 }
+        "directionBounds": {
+          "windFrom": 80,
+          "clockDir": "cw",
+          "windTo": 259
+        },
+        "speedBounds": {
+          "minKts": 0,
+          "maxKts": 10
+        }
       },
       {
         "conds": ["VFR", "MVFR"],
         "useDepFlow": "NORTH CALM",
         "useArrFlow": "NORTH CALM",
-        "directionBounds": { "windFrom": 260, "clockDir": "cw", "windTo": 79 },
-        "speedBounds": { "minKts": 0, "maxKts": 10 }
+        "directionBounds": {
+          "windFrom": 260,
+          "clockDir": "cw",
+          "windTo": 79
+        },
+        "speedBounds": {
+          "minKts": 0,
+          "maxKts": 10
+        }
       },
       {
         "conds": ["IFR", "LIFR"],
         "useDepFlow": "NORTH CALM",
         "useArrFlow": "NORTH IMC",
-        "directionBounds": { "windFrom": 260, "clockDir": "cw", "windTo": 79 },
-        "speedBounds": { "minKts": 0, "maxKts": 10 }
+        "directionBounds": {
+          "windFrom": 260,
+          "clockDir": "cw",
+          "windTo": 79
+        },
+        "speedBounds": {
+          "minKts": 0,
+          "maxKts": 10
+        }
       },
       {
         "conds": ["VFR", "MVFR"],
         "useDepFlow": "NORTH EAST",
         "useArrFlow": "NORTH EAST",
-        "directionBounds": { "windFrom": 350, "clockDir": "cw", "windTo": 79 },
-        "speedBounds": { "minKts": 11, "maxKts": 25 }
+        "directionBounds": {
+          "windFrom": 350,
+          "clockDir": "cw",
+          "windTo": 79
+        },
+        "speedBounds": {
+          "minKts": 11,
+          "maxKts": 25
+        }
       },
       {
         "conds": ["IFR", "LIFR"],
         "useDepFlow": "NORTH EAST",
         "useArrFlow": "NORTH IMC",
-        "directionBounds": { "windFrom": 350, "clockDir": "cw", "windTo": 79 },
-        "speedBounds": { "minKts": 11, "maxKts": 25 }
+        "directionBounds": {
+          "windFrom": 350,
+          "clockDir": "cw",
+          "windTo": 79
+        },
+        "speedBounds": {
+          "minKts": 11,
+          "maxKts": 25
+        }
       },
       {
         "conds": ["VFR", "MVFR"],
         "useDepFlow": "SOUTH EAST",
         "useArrFlow": "SOUTH EAST",
-        "directionBounds": { "windFrom": 80, "clockDir": "cw", "windTo": 169 },
-        "speedBounds": { "minKts": 11, "maxKts": 25 }
+        "directionBounds": {
+          "windFrom": 80,
+          "clockDir": "cw",
+          "windTo": 169
+        },
+        "speedBounds": {
+          "minKts": 11,
+          "maxKts": 25
+        }
       },
       {
         "conds": ["IFR", "LIFR"],
         "useDepFlow": "SOUTH EAST",
         "useArrFlow": "SOUTH IMC",
-        "directionBounds": { "windFrom": 80, "clockDir": "cw", "windTo": 169 },
-        "speedBounds": { "minKts": 11, "maxKts": 25 }
+        "directionBounds": {
+          "windFrom": 80,
+          "clockDir": "cw",
+          "windTo": 169
+        },
+        "speedBounds": {
+          "minKts": 11,
+          "maxKts": 25
+        }
       },
       {
         "conds": ["VFR", "MVFR"],
         "useDepFlow": "SOUTH WEST (VMC)",
         "useArrFlow": "SOUTH WEST",
-        "directionBounds": { "windFrom": 170, "clockDir": "cw", "windTo": 259 },
-        "speedBounds": { "minKts": 11, "maxKts": 25 }
+        "directionBounds": {
+          "windFrom": 170,
+          "clockDir": "cw",
+          "windTo": 259
+        },
+        "speedBounds": {
+          "minKts": 11,
+          "maxKts": 25
+        }
       },
       {
         "conds": ["IFR", "LIFR"],
         "useDepFlow": "SOUTH WEST (IMC)",
         "useArrFlow": "SOUTH WEST",
-        "directionBounds": { "windFrom": 170, "clockDir": "cw", "windTo": 259 },
-        "speedBounds": { "minKts": 11, "maxKts": 25 }
+        "directionBounds": {
+          "windFrom": 170,
+          "clockDir": "cw",
+          "windTo": 259
+        },
+        "speedBounds": {
+          "minKts": 11,
+          "maxKts": 25
+        }
       },
       {
         "conds": ["VFR", "MVFR"],
         "useDepFlow": "NORTH WEST",
         "useArrFlow": "NORTH WEST",
-        "directionBounds": { "windFrom": 260, "clockDir": "cw", "windTo": 349 },
-        "speedBounds": { "minKts": 11, "maxKts": 25 }
+        "directionBounds": {
+          "windFrom": 260,
+          "clockDir": "cw",
+          "windTo": 349
+        },
+        "speedBounds": {
+          "minKts": 11,
+          "maxKts": 25
+        }
       },
       {
         "conds": ["IFR", "LIFR"],
         "useDepFlow": "NORTH WEST",
         "useArrFlow": "NORTH IMC",
-        "directionBounds": { "windFrom": 260, "clockDir": "cw", "windTo": 349 },
-        "speedBounds": { "minKts": 11, "maxKts": 25 }
+        "directionBounds": {
+          "windFrom": 260,
+          "clockDir": "cw",
+          "windTo": 349
+        },
+        "speedBounds": {
+          "minKts": 11,
+          "maxKts": 25
+        }
       },
       {
         "conds": ["VFR", "MVFR"],
         "useDepFlow": "NORTH ALL",
         "useArrFlow": "NORTH ALL (VMC)",
-        "directionBounds": { "windFrom": 300, "clockDir": "cw", "windTo": 39 },
-        "speedBounds": { "minKts": 26, "maxKts": 200 }
+        "directionBounds": {
+          "windFrom": 300,
+          "clockDir": "cw",
+          "windTo": 39
+        },
+        "speedBounds": {
+          "minKts": 26,
+          "maxKts": 200
+        }
       },
       {
         "conds": ["IFR", "LIFR"],
         "useDepFlow": "NORTH ALL",
         "useArrFlow": "NORTH IMC",
-        "directionBounds": { "windFrom": 300, "clockDir": "cw", "windTo": 39 },
-        "speedBounds": { "minKts": 26, "maxKts": 200 }
+        "directionBounds": {
+          "windFrom": 300,
+          "clockDir": "cw",
+          "windTo": 39
+        },
+        "speedBounds": {
+          "minKts": 26,
+          "maxKts": 200
+        }
       },
       {
         "conds": ["VFR", "MVFR"],
         "useDepFlow": "SOUTH ALL",
         "useArrFlow": "SOUTH ALL (VMC)",
-        "directionBounds": { "windFrom": 120, "clockDir": "cw", "windTo": 219 },
-        "speedBounds": { "minKts": 26, "maxKts": 200 }
+        "directionBounds": {
+          "windFrom": 120,
+          "clockDir": "cw",
+          "windTo": 219
+        },
+        "speedBounds": {
+          "minKts": 26,
+          "maxKts": 200
+        }
       },
       {
         "conds": ["IFR", "LIFR"],
         "useDepFlow": "SOUTH ALL",
         "useArrFlow": "SOUTH IMC",
-        "directionBounds": { "windFrom": 120, "clockDir": "cw", "windTo": 219 },
-        "speedBounds": { "minKts": 26, "maxKts": 200 }
+        "directionBounds": {
+          "windFrom": 120,
+          "clockDir": "cw",
+          "windTo": 219
+        },
+        "speedBounds": {
+          "minKts": 26,
+          "maxKts": 200
+        }
       },
       {
         "conds": ["VFR", "MVFR", "IFR", "LIFR"],
         "useDepFlow": "EAST ALL",
         "useArrFlow": "EAST ALL",
-        "directionBounds": { "windFrom": 40, "clockDir": "cw", "windTo": 119 },
-        "speedBounds": { "minKts": 26, "maxKts": 200 }
+        "directionBounds": {
+          "windFrom": 40,
+          "clockDir": "cw",
+          "windTo": 119
+        },
+        "speedBounds": {
+          "minKts": 26,
+          "maxKts": 200
+        }
       },
       {
         "conds": ["VFR", "MVFR", "IFR", "LIFR"],
         "useDepFlow": "WEST ALL",
         "useArrFlow": "WEST ALL",
-        "directionBounds": { "windFrom": 220, "clockDir": "cw", "windTo": 299 },
-        "speedBounds": { "minKts": 26, "maxKts": 200 }
+        "directionBounds": {
+          "windFrom": 220,
+          "clockDir": "cw",
+          "windTo": 299
+        },
+        "speedBounds": {
+          "minKts": 26,
+          "maxKts": 200
+        }
       }
     ]
   },

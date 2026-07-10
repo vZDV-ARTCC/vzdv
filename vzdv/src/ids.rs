@@ -9,8 +9,10 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedFlow {
-    pub dep_rwys: Vec<String>,
-    pub arr_rwys: Vec<String>,
+    /// Runway → list of departure corridors (or arrival runways) assigned to it.
+    pub dep_rwys: HashMap<String, Vec<String>>,
+    /// Runway → list of arrival gates assigned to it (empty for split airports).
+    pub arr_rwys: HashMap<String, Vec<String>>,
     pub dep_name: Option<String>,
     pub arr_name: Option<String>,
 }
@@ -61,8 +63,8 @@ impl CombinedProcedure {
                 anyhow::anyhow!("Flow '{}' not found for airport {}", atis.preset, icao)
             })?;
             return Ok(ResolvedFlow {
-                dep_rwys: flow.dep_rwys.clone(),
-                arr_rwys: flow.arr_rwys.clone(),
+                dep_rwys: rwys_to_map(&flow.dep_rwys),
+                arr_rwys: rwys_to_map(&flow.arr_rwys),
                 dep_name: Some(flow.name.clone()),
                 arr_name: Some(flow.name.clone()),
             });
@@ -79,8 +81,8 @@ impl CombinedProcedure {
             )
         })?;
         Ok(ResolvedFlow {
-            dep_rwys: flow.dep_rwys.clone(),
-            arr_rwys: flow.arr_rwys.clone(),
+            dep_rwys: rwys_to_map(&flow.dep_rwys),
+            arr_rwys: rwys_to_map(&flow.arr_rwys),
             dep_name: Some(flow.name.clone()),
             arr_name: Some(flow.name.clone()),
         })
@@ -89,7 +91,15 @@ impl CombinedProcedure {
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct DepCorridor {
+    pub direction: String,
+    pub gates: Vec<String>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct SplitProcedure {
+    pub dep_corridors: HashMap<String, DepCorridor>,
     pub dep_flows: HashMap<String, SplitFlow>,
     pub arr_flows: HashMap<String, SplitFlow>,
     pub rules: Vec<SplitFlowRule>,
@@ -167,7 +177,8 @@ impl SplitProcedure {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SplitFlow {
-    pub rwys: Vec<String>,
+    /// Runway number/name → category → list of departure gates assigned to it.
+    pub rwys: HashMap<String, Vec<String>>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -206,6 +217,19 @@ pub struct FlowRule {
     pub use_flow: String,
     pub direction_bounds: Option<WindDirectionBounds>,
     pub speed_bounds: Option<WindSpeedBounds>,
+}
+
+/// Convert a simple runway list (from combined flows) into the standard
+/// runway→gate list map (combined airports have no gate data).
+fn rwys_to_map(rwys: &[String]) -> HashMap<String, Vec<String>> {
+    rwys.iter().map(|r| (r.clone(), Vec::new())).collect()
+}
+
+/// Sorted runway names from a runway→gate list map, for display.
+pub fn sorted_rwy_names(map: &HashMap<String, Vec<String>>) -> Vec<String> {
+    let mut names: Vec<String> = map.keys().cloned().collect();
+    names.sort();
+    names
 }
 
 fn matches_wind_rule(
@@ -573,8 +597,8 @@ mod tests {
             .unwrap();
         assert_eq!(flow.dep_name.as_deref(), Some("SOUTH ALL"));
         assert_eq!(flow.arr_name.as_deref(), Some("SOUTH ALL (VMC)"));
-        assert_eq!(flow.dep_rwys, vec!["16L", "17L"]);
-        assert_eq!(flow.arr_rwys, vec!["16L", "16R", "17R"]);
+        assert_eq!(sorted_rwy_names(&flow.dep_rwys), vec!["16L", "17L"]);
+        assert_eq!(sorted_rwy_names(&flow.arr_rwys), vec!["16L", "16R", "17R"]);
     }
 
     #[test]
@@ -604,10 +628,13 @@ mod tests {
 
         let flow = procedure.determine_flow(&weather, &[dep_atis]).unwrap();
         assert_eq!(flow.dep_name.as_deref(), Some("SOUTH EAST"));
-        assert_eq!(flow.dep_rwys, vec!["8", "17L", "17R"]);
+        assert_eq!(sorted_rwy_names(&flow.dep_rwys), vec!["17L", "17R", "8"]);
         // Arrival should be weather-determined: SOUTH EAST
         assert_eq!(flow.arr_name.as_deref(), Some("SOUTH EAST"));
-        assert_eq!(flow.arr_rwys, vec!["7", "16L", "16R", "17R"]);
+        assert_eq!(
+            sorted_rwy_names(&flow.arr_rwys),
+            vec!["16L", "16R", "17R", "7"]
+        );
     }
 
     #[test]
@@ -626,8 +653,8 @@ mod tests {
         let flow = procedure.determine_flow(&weather, &[]).unwrap();
         assert_eq!(flow.dep_name.as_deref(), Some("SOUTH CALM"));
         assert_eq!(flow.arr_name.as_deref(), Some("SOUTH CALM"));
-        assert_eq!(flow.dep_rwys, vec!["8", "17L", "25"]);
-        assert_eq!(flow.arr_rwys, vec!["16L", "16R", "17R"]);
+        assert_eq!(sorted_rwy_names(&flow.dep_rwys), vec!["17L", "25", "8"]);
+        assert_eq!(sorted_rwy_names(&flow.arr_rwys), vec!["16L", "16R", "17R"]);
     }
 
     #[test]
@@ -646,8 +673,8 @@ mod tests {
         let flow = procedure.determine_flow(&weather, &[]).unwrap();
         assert_eq!(flow.dep_name.as_deref(), Some("SOUTH CALM"));
         assert_eq!(flow.arr_name.as_deref(), Some("SOUTH CALM"));
-        assert_eq!(flow.dep_rwys, vec!["8", "17L", "25"]);
-        assert_eq!(flow.arr_rwys, vec!["16L", "16R", "17R"]);
+        assert_eq!(sorted_rwy_names(&flow.dep_rwys), vec!["17L", "25", "8"]);
+        assert_eq!(sorted_rwy_names(&flow.arr_rwys), vec!["16L", "16R", "17R"]);
     }
 
     #[test]
@@ -666,8 +693,8 @@ mod tests {
         let flow = procedure.determine_flow(&weather, &[]).unwrap();
         assert_eq!(flow.dep_name.as_deref(), Some("SOUTH CALM"));
         assert_eq!(flow.arr_name.as_deref(), Some("SOUTH IMC"));
-        assert_eq!(flow.dep_rwys, vec!["8", "17L", "25"]);
-        assert_eq!(flow.arr_rwys, vec!["16R", "17L", "17R"]);
+        assert_eq!(sorted_rwy_names(&flow.dep_rwys), vec!["17L", "25", "8"]);
+        assert_eq!(sorted_rwy_names(&flow.arr_rwys), vec!["16R", "17L", "17R"]);
     }
 
     #[test]
@@ -686,7 +713,7 @@ mod tests {
         let flow = procedure.determine_flow(&weather, &[]).unwrap();
         assert_eq!(flow.dep_name.as_deref(), Some("NORTH ALL"));
         assert_eq!(flow.arr_name.as_deref(), Some("NORTH ALL (VMC)"));
-        assert_eq!(flow.dep_rwys, vec!["34L", "34R"]);
-        assert_eq!(flow.arr_rwys, vec!["34R", "35L", "35R"]);
+        assert_eq!(sorted_rwy_names(&flow.dep_rwys), vec!["34L", "34R"]);
+        assert_eq!(sorted_rwy_names(&flow.arr_rwys), vec!["34R", "35L", "35R"]);
     }
 }

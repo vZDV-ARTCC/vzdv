@@ -23,7 +23,13 @@
     <tbody>
       {% for row in rows %}
         <tr>
-          <td><strong>{{ row.icao }}</strong></td>
+          <td>
+            {% if row.is_split %}
+              <strong><a href="/ids/{{ row.icao }}">{{ row.icao }}</a></strong>
+            {% else %}
+              <strong>{{ row.icao }}</strong>
+            {% endif %}
+          </td>
           <td>
             {% if row.dep_rwys %}
               {{ row.dep_rwys }}
