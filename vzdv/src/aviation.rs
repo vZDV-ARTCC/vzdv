@@ -20,6 +20,7 @@ pub struct AirportWeather {
     pub visibility: u16,
     pub ceiling: u16,
     pub wind: (u16, u8, u8),
+    pub altimeter: Option<f32>,
     pub raw: String,
 }
 
@@ -97,12 +98,24 @@ pub fn parse_metar(line: &str) -> Result<AirportWeather> {
         WeatherConditions::LIFR
     };
 
+    let altimeter = parts.iter().find_map(|part| {
+        if let Some(v) = part.strip_prefix('A') {
+            // the `.parse().ok()` should handle "AUTO" as None and let it continue
+            v.parse::<u32>()
+                .ok()
+                .map(|hundredths| hundredths as f32 / 100.0)
+        } else {
+            None
+        }
+    });
+
     Ok(AirportWeather {
         name: airport.to_string(),
         conditions,
         visibility,
         ceiling,
         wind,
+        altimeter,
         raw: line.to_string(),
     })
 }

@@ -17,6 +17,7 @@
         <th>ATIS</th>
         <th>Conditions</th>
         <th>Wind</th>
+        <th>Altimeter</th>
         <th>METAR</th>
       </tr>
     </thead>
@@ -72,6 +73,13 @@
           <td>
             {% if row.wind %}
               {{ row.wind }}
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.altimeter %}
+              {{ row.altimeter }}
             {% else %}
               <span class="text-muted">—</span>
             {% endif %}

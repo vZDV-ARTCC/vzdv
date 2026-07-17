@@ -408,6 +408,7 @@ mod tests {
             raw: "".into(),
             visibility: 10,
             wind: (180, 5, 10),
+            altimeter: None,
         };
         let atis = Atis {
             airport_conditions: "".into(),
@@ -436,6 +437,7 @@ mod tests {
             raw: "".into(),
             visibility: 10,
             wind: (350, 1, 0),
+            altimeter: None,
         };
 
         let flow = procedure.determine_flow(&weather, &[]).unwrap();
@@ -453,6 +455,7 @@ mod tests {
             raw: "".into(),
             visibility: 10,
             wind: (350, 5, 10),
+            altimeter: None,
         };
 
         let flow = procedure.determine_flow(&weather, &[]).unwrap();
@@ -485,6 +488,7 @@ mod tests {
             raw: "".into(),
             visibility: 10,
             wind: (350, 5, 9),
+            altimeter: None,
         };
 
         let flow = procedure.determine_flow(&weather, &[]).unwrap();
@@ -502,6 +506,7 @@ mod tests {
             raw: "".into(),
             visibility: 10,
             wind: (350, 5, 15),
+            altimeter: None,
         };
 
         let flow = procedure.determine_flow(&weather, &[]).unwrap();
@@ -519,6 +524,7 @@ mod tests {
             raw: "".into(),
             visibility: 10,
             wind: (150, 5, 15),
+            altimeter: None,
         };
 
         let flow = procedure.determine_flow(&weather, &[]).unwrap();
@@ -536,6 +542,7 @@ mod tests {
             raw: "".into(),
             visibility: 10,
             wind: (350, 5, 9),
+            altimeter: None,
         };
 
         let flow = procedure.determine_flow(&weather, &[]).unwrap();
@@ -553,6 +560,7 @@ mod tests {
             raw: "".into(),
             visibility: 10,
             wind: (350, 5, 15),
+            altimeter: None,
         };
 
         let flow = procedure.determine_flow(&weather, &[]).unwrap();
@@ -570,6 +578,7 @@ mod tests {
             raw: "".into(),
             visibility: 10,
             wind: (150, 5, 15),
+            altimeter: None,
         };
 
         let flow = procedure.determine_flow(&weather, &[]).unwrap();
@@ -589,6 +598,7 @@ mod tests {
             raw: "".into(),
             visibility: 10,
             wind: (180, 5, 10),
+            altimeter: None,
         };
         let dep_atis = Atis {
             airport_conditions: "".into(),
@@ -634,6 +644,7 @@ mod tests {
             raw: "".into(),
             visibility: 10,
             wind: (130, 5, 15),
+            altimeter: None,
         };
         let dep_atis = Atis {
             airport_conditions: "".into(),
@@ -669,6 +680,7 @@ mod tests {
             raw: "".into(),
             visibility: 10,
             wind: (180, 1, 0),
+            altimeter: None,
         };
 
         let flow = procedure.determine_flow(&weather, &[]).unwrap();
@@ -689,6 +701,7 @@ mod tests {
             raw: "KDEN 280853Z 09007KT 10SM CLR 15/03 A2977 RMK AO2 SLP987 T01500028 53021".into(),
             visibility: 10,
             wind: (90, 7, 0),
+            altimeter: Some(29.77),
         };
 
         let flow = procedure.determine_flow(&weather, &[]).unwrap();
@@ -709,6 +722,7 @@ mod tests {
             raw: "".into(),
             visibility: 10,
             wind: (180, 1, 0),
+            altimeter: None,
         };
 
         let flow = procedure.determine_flow(&weather, &[]).unwrap();
@@ -729,6 +743,7 @@ mod tests {
             raw: "".into(),
             visibility: 10,
             wind: (350, 10, 30),
+            altimeter: None,
         };
 
         let flow = procedure.determine_flow(&weather, &[]).unwrap();

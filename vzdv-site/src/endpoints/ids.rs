@@ -93,6 +93,7 @@ struct IdsRow {
     atis_info: String,
     conditions: Option<String>,
     wind: Option<String>,
+    altimeter: Option<String>,
     raw_metar: Option<String>,
     error: Option<String>,
 }
@@ -130,6 +131,7 @@ fn fallback_weather(icao: &str) -> AirportWeather {
         raw: "No METAR available".to_string(),
         visibility: 10,
         wind: (0, 0, 0),
+        altimeter: None,
     }
 }
 
@@ -164,6 +166,7 @@ fn build_ids_row(
 
     let conditions = weather.map(|w| format!("{:?}", w.conditions));
     let wind = weather.map(format_wind);
+    let altimeter = weather.and_then(|w| w.altimeter).map(|a| format!("{a:.2}"));
     let raw_metar = weather.map(|w| w.raw.clone());
 
     let is_split = matches!(procedure, AirportProcedure::Split(_));
@@ -191,6 +194,7 @@ fn build_ids_row(
         atis_info,
         conditions,
         wind,
+        altimeter,
         raw_metar,
         error,
     };
