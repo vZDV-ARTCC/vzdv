@@ -179,6 +179,8 @@ impl CacheEntry {
 pub struct AppState {
     /// App config
     pub config: Config,
+    /// Sector splits configuration
+    pub splits: vzdv::splits::ConfigSplits,
     /// Access to the DB
     pub db: SqlitePool,
     /// Loaded templates

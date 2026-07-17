@@ -1,0 +1,352 @@
+{% extends "_layout.jinja" %}
+
+{% block title %}Sector Splits - vZDV{% endblock %}
+
+{% block extra_head %}
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <style>
+    #split-map {
+      height: 70vh;
+      min-height: 400px;
+      width: 100%;
+      border-radius: 0.5rem;
+      background: #1a1d20;
+    }
+    .sector-label {
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      color: #fff;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-align: center;
+      text-shadow: 0 0 3px #000;
+      pointer-events: none;
+      line-height: 1;
+    }
+    .leaflet-container {
+      background: #1a1d20;
+    }
+    .legend-swatch {
+      width: 1rem;
+      height: 1rem;
+      display: inline-block;
+      border-radius: 0.25rem;
+      margin-right: 0.5rem;
+      vertical-align: middle;
+      border: 1px solid rgba(255, 255, 255, 0.4);
+    }
+  </style>
+{% endblock %}
+
+{% block body %}
+  <h2 class="mb-3">Sector Splits</h2>
+
+  <div class="row g-3 mb-3 align-items-end">
+    <div class="col-md-4">
+      <label for="split-select" class="form-label">Split configuration</label>
+      <select id="split-select" class="form-select">
+        {% for name in split_names %}
+          <option value="{{ name }}" {% if name == current_split %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-4 d-flex align-items-center">
+      <div class="btn-group" role="group" aria-label="Band">
+        <button type="button" id="btn-high" class="btn btn-outline-light active">High (Above FL260)</button>
+        <button type="button" id="btn-low" class="btn btn-outline-light">Low (AAB FL260)</button>
+      </div>
+    </div>
+    <div class="col-md-4 text-md-end">
+      <button id="copy-link" class="btn btn-outline-light btn-sm">
+        <i class="bi bi-link-45deg"></i> Copy link
+      </button>
+    </div>
+  </div>
+
+  <div id="split-map" class="shadow-sm"></div>
+
+  <div class="mt-3" id="legend"></div>
+
+  <script type="application/json" id="splits-config">{{ splits_json | safe }}</script>
+  <script id="geojson-url">{{ geojson_url }}</script>
+  <script id="current-split">{{ current_split | safe }}</script>
+
+  <script>
+    (function () {
+      const config = JSON.parse(document.getElementById('splits-config').textContent);
+      const geojsonUrl = document.getElementById('geojson-url').textContent.trim();
+      const currentSplitName = document.getElementById('current-split').textContent.trim();
+
+      const PALETTE = [
+        '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b',
+        '#e377c2', '#bcbd22', '#17becf',
+      ];
+
+      const map = L.map('split-map').setView([39.0, -105.0], 6);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: 'abcd',
+        maxZoom: 20,
+      }).addTo(map);
+
+      let geojsonData = null;
+      let layers = {};
+      let labelLayers = {};
+      let bandColorMaps = {};
+      let activeColorMap = {};
+      let activeSplit = currentSplitName;
+      let showLow = false;
+      const bandsVisible = { high: true, low: false };
+
+      function getBand(feature) {
+        const p = feature.properties;
+        if (p.alt_hi <= 260) return 'low';
+        if (p.alt_lo >= 270) return 'high';
+        return null;
+      }
+
+      function getBandRaw(split, band) {
+        return Object.keys(split[band] || {}).length
+          ? split[band]
+          : band === 'low' && Object.keys(split.high || {}).length
+            ? split.high
+            : {};
+      }
+
+      function resolveAssignments(split, band) {
+        const raw = getBandRaw(split, band);
+        const assignments = {};
+        for (const [controllerId, entries] of Object.entries(raw)) {
+          for (const entry of entries) {
+            if (typeof entry === 'string' && config.areas[entry]) {
+              for (const sectorId of config.areas[entry]) {
+                assignments[sectorId] = controllerId;
+              }
+            } else if (typeof entry === 'number') {
+              assignments[entry] = controllerId;
+            }
+          }
+        }
+        return assignments;
+      }
+
+      function getControllers(split) {
+        const ids = new Set();
+        for (const band of ['high', 'low']) {
+          const raw =
+            Object.keys(split[band] || {}).length
+              ? split[band]
+              : band === 'low' && Object.keys(split.high || {}).length
+                ? split.high
+                : {};
+          for (const id of Object.keys(raw)) ids.add(id);
+        }
+        return Array.from(ids).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+      }
+
+      function buildLegend(controllers) {
+        const legend = document.getElementById('legend');
+        legend.innerHTML = '';
+        const heading = document.createElement('h6');
+        heading.className = 'text-secondary';
+        heading.textContent = 'Controller assignments';
+        legend.appendChild(heading);
+        const list = document.createElement('div');
+        list.className = 'd-flex flex-wrap gap-3';
+
+        for (const id of controllers) {
+          const freq = config.frequencies[id];
+          const label = freq ? `${id} — ${freq.name} ${freq.freq.toFixed(3)}` : `Controller ${id}`;
+          const item = document.createElement('div');
+          item.innerHTML = `<span class="legend-swatch" style="background-color: ${activeColorMap[id] || '#999'};"></span>${label}`;
+          list.appendChild(item);
+        }
+        legend.appendChild(list);
+      }
+
+      function render() {
+        const split = config.splits[activeSplit];
+        if (!split) return;
+
+        for (const band of ['high', 'low']) {
+          if (layers[band]) map.removeLayer(layers[band]);
+          if (labelLayers[band]) map.removeLayer(labelLayers[band]);
+        }
+
+        for (const band of ['high', 'low']) {
+          const assignments = resolveAssignments(split, band);
+          const raw = getBandRaw(split, band);
+          const sortedControllerIds = Object.keys(raw).sort(
+            (a, b) => parseInt(a, 10) - parseInt(b, 10)
+          );
+          const colorMap = {};
+          sortedControllerIds.forEach((id, i) => {
+            colorMap[id] = PALETTE[i % PALETTE.length];
+          });
+          bandColorMaps[band] = colorMap;
+
+          const layer = L.geoJSON(geojsonData, {
+            filter: (feature) => getBand(feature) === band,
+            style: (feature) => {
+              const controller = assignments[feature.properties.id];
+              if (controller && colorMap[controller]) {
+                return {
+                  color: '#ffffff',
+                  weight: 1,
+                  fillColor: colorMap[controller],
+                  fillOpacity: 0.45,
+                };
+              }
+              return {
+                color: '#666666',
+                weight: 0.5,
+                fillColor: '#333333',
+                fillOpacity: 0.05,
+              };
+            },
+            onEachFeature: (feature, layer) => {
+              const controller = assignments[feature.properties.id];
+              const freq = controller && config.frequencies[controller];
+              let html = `<strong>Sector ${feature.properties.id}</strong>`;
+              if (controller) {
+                html += `<br>Controller: ${controller}`;
+                if (freq) {
+                  html += `<br>${freq.name} ${freq.freq.toFixed(3)}`;
+                }
+              } else {
+                html += '<br><em>Not assigned</em>';
+              }
+              layer.bindTooltip(html);
+            },
+          });
+
+          const labels = L.layerGroup();
+          layer.eachLayer((polygonLayer) => {
+            const sectorId = polygonLayer.feature.properties.id;
+            const controller = assignments[sectorId];
+            if (!controller) return;
+            const freq = config.frequencies[controller];
+            const html = `<div style="text-align:center;line-height:1.1">${controller}${freq ? `<br><small>${freq.freq.toFixed(3)}</small>` : ''}</div>`;
+            const center = polygonLayer.getBounds().getCenter();
+            const marker = L.marker(center, {
+              icon: L.divIcon({
+                className: 'sector-label',
+                html,
+                iconSize: [40, 28],
+              }),
+              interactive: false,
+            });
+            labels.addLayer(marker);
+          });
+
+          layers[band] = layer;
+          labelLayers[band] = labels;
+        }
+
+        activeColorMap = bandColorMaps[showLow ? 'low' : 'high'] || {};
+        syncBandToggle(split);
+      }
+
+      function getVisibleControllers(split) {
+        const ids = new Set();
+        for (const band of ['high', 'low']) {
+          if (!bandsVisible[band]) continue;
+          const raw =
+            Object.keys(split[band] || {}).length
+              ? split[band]
+              : band === 'low' && Object.keys(split.high || {}).length
+                ? split.high
+                : {};
+          for (const id of Object.keys(raw)) ids.add(id);
+        }
+        return Array.from(ids).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+      }
+
+      function syncBandToggle(split) {
+        bandsVisible.high = !showLow;
+        bandsVisible.low = showLow;
+        activeColorMap = bandColorMaps[showLow ? 'low' : 'high'] || {};
+        document.getElementById('btn-high').classList.toggle('active', !showLow);
+        document.getElementById('btn-low').classList.toggle('active', showLow);
+
+        const visibleLayers = [];
+        for (const band of ['high', 'low']) {
+          const layer = layers[band];
+          const labels = labelLayers[band];
+          if (!layer) continue;
+          if (bandsVisible[band]) {
+            layer.addTo(map);
+            labels.addTo(map);
+            visibleLayers.push(layer);
+          } else {
+            map.removeLayer(layer);
+            map.removeLayer(labels);
+          }
+        }
+        if (visibleLayers.length > 0) {
+          map.fitBounds(L.featureGroup(visibleLayers).getBounds().pad(0.05));
+        }
+
+        if (split) {
+          buildLegend(getVisibleControllers(split));
+        }
+      }
+
+      function updateURL() {
+        const url = new URL(window.location.href);
+        url.searchParams.set('split', activeSplit);
+        window.history.replaceState({}, '', url);
+      }
+
+      document.getElementById('split-select').addEventListener('change', (e) => {
+        activeSplit = e.target.value;
+        updateURL();
+        render();
+      });
+
+      document.getElementById('btn-high').addEventListener('click', () => {
+        showLow = false;
+        syncBandToggle(config.splits[activeSplit]);
+      });
+      document.getElementById('btn-low').addEventListener('click', () => {
+        showLow = true;
+        syncBandToggle(config.splits[activeSplit]);
+      });
+
+      document.getElementById('copy-link').addEventListener('click', () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('split', activeSplit);
+        navigator.clipboard.writeText(url.toString()).then(() => {
+          const btn = document.getElementById('copy-link');
+          const original = btn.innerHTML;
+          btn.innerHTML = '<i class="bi bi-check2"></i> Copied';
+          setTimeout(() => (btn.innerHTML = original), 1500);
+        });
+      });
+
+      fetch(geojsonUrl)
+        .then((res) => res.json())
+        .then((data) => {
+          geojsonData = data;
+          render();
+        })
+        .catch((err) => {
+          console.error('Failed to load GeoJSON:', err);
+          document.getElementById('split-map').innerHTML =
+            '<div class="p-3 text-danger">Could not load sector geometry.</div>';
+        });
+    })();
+  </script>
+{% endblock %}

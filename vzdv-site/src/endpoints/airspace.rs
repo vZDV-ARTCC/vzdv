@@ -504,6 +504,43 @@ async fn page_denver_data(
     Ok(Html(rendered))
 }
 
+#[derive(Debug, Deserialize)]
+struct SplitQuery {
+    split: Option<String>,
+}
+
+/// Map view of configured sector splits.
+async fn page_splits(
+    State(state): State<Arc<AppState>>,
+    session: Session,
+    Query(query): Query<SplitQuery>,
+) -> Result<Html<String>, AppError> {
+    let user_info: Option<UserInfo> = session.get(SESSION_USER_INFO_KEY).await?;
+    let splits = &state.splits;
+    let split_names: Vec<String> = splits.splits.keys().cloned().collect();
+    let current_split = query
+        .split
+        .filter(|s| splits.splits.contains_key(s))
+        .or_else(|| {
+            if splits.splits.contains_key(&splits.default_split) {
+                Some(splits.default_split.clone())
+            } else {
+                split_names.first().cloned()
+            }
+        })
+        .unwrap_or_default();
+    let splits_json = serde_json::to_string(splits)?;
+    let template = state.templates.get_template("airspace/splits.jinja")?;
+    let rendered = template.render(context! {
+        user_info,
+        current_split,
+        split_names,
+        splits_json,
+        geojson_url => "/static/zdv.geojson",
+    })?;
+    Ok(Html(rendered))
+}
+
 /// This file's routes and templates.
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -519,4 +556,5 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/airspace/KDEN", get(page_denver))
         .route("/airspace/KDEN/data", get(page_denver_data))
+        .route("/airspace/splits", get(page_splits))
 }

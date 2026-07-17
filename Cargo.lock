@@ -1742,6 +1742,7 @@ checksum = "cea70ddb795996207ad57735b50c5982d8844f38ba9ee5f1aedcfb708a2aa11e"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.4",
+ "serde",
 ]
 
 [[package]]
@@ -4431,6 +4432,7 @@ dependencies = [
  "chrono",
  "fern",
  "humantime",
+ "indexmap",
  "itertools 0.14.0",
  "lettre",
  "log",
