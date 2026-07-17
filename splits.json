@@ -155,8 +155,8 @@
       "high": {
         "17": ["Area 2 High", "Area 5 High"],
         "25": ["Area 4 High"],
-        "29": ["Area 3 High"],
-        "14": ["Area 6 High"]
+        "14": ["Area 6 High"],
+        "29": ["Area 3 High"]
       },
       "low": {
         "11": ["All Low"]
@@ -165,8 +165,8 @@
     "14-17-25": {
       "high": {
         "17": ["Area 2 High", "Area 3 High", "Area 5 High"],
-        "14": ["Area 6 High"],
-        "25": ["Area 4 High"]
+        "25": ["Area 4 High"],
+        "14": ["Area 6 High"]
       },
       "low": {
         "11": ["All Low"]
@@ -193,10 +193,10 @@
     "5-Way": {
       "high": {
         "17": ["Area 2 High"],
-        "16": ["Area 5 High"],
-        "29": ["Area 3 High"],
         "25": ["Area 4 High"],
-        "14": ["Area 6 High"]
+        "14": ["Area 6 High"],
+        "29": ["Area 3 High"],
+        "16": ["Area 5 High"]
       },
       "low": {
         "11": ["All Low"]
