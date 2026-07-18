@@ -724,4 +724,5 @@ ON CONFLICT(event_id) DO UPDATE SET
 WHERE
     event_id=$1
 ";
-pub const DELETE_EVENT_ENROUTE_SECTOR_SPLIT: &str = "DELETE FROM event_enroute_sector_split_assignment WHERE event_id = $1";
+pub const DELETE_EVENT_ENROUTE_SECTOR_SPLIT: &str =
+    "DELETE FROM event_enroute_sector_split_assignment WHERE event_id = $1";

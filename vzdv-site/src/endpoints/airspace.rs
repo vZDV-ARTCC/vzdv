@@ -613,6 +613,14 @@ async fn post_save_split(
         .bind(&form.config)
         .execute(&state.db)
         .await?;
+
+    record_log(format!("Saved enroute split '{}'", name), &state.db, true).await?;
+    flashed_messages::push_flashed_message(
+        session,
+        flashed_messages::MessageLevel::Success,
+        &format!("Split '{}' saved", name),
+    )
+    .await?;
     Ok(Redirect::to(&format!("/airspace/splits?split={}", name)))
 }
 
@@ -655,6 +663,13 @@ async fn post_delete_split(
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
+        record_log(format!("Deleted enroute split '{}'", name), &state.db, true).await?;
+        flashed_messages::push_flashed_message(
+            session,
+            flashed_messages::MessageLevel::Success,
+            &format!("Split '{}' deleted", name),
+        )
+        .await?;
     }
     Ok(Redirect::to("/airspace/splits"))
 }
