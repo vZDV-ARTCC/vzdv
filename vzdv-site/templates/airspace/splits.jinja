@@ -1,6 +1,6 @@
 {% extends "_layout.jinja" %}
 
-{% block title %}Sector Splits - vZDV{% endblock %}
+{% block title %}Enroute Sector Splits | vZDV{% endblock %}
 
 {% block extra_head %}
   <link
@@ -75,10 +75,17 @@
 {% endblock %}
 
 {% block body %}
-  <h2 class="mb-3">Sector Splits</h2>
+  <h2 class="mb-3">Enroute Sector Splits</h2>
+
+  {% if event_split %}
+    <div class="alert alert-info d-flex align-items-center" role="alert">
+      <i class="bi bi-info-circle me-2"></i>
+      <div><strong>{{ event_split }}</strong> is the current event split.</div>
+    </div>
+  {% endif %}
 
   <div class="row g-3 mb-3 align-items-end">
-    <div class="col-md-4">
+    <div class="col-md-3">
       <label for="split-select" class="form-label">Split configuration</label>
       <select id="split-select" class="form-select">
         {% for name in split_names %}
@@ -86,23 +93,58 @@
         {% endfor %}
       </select>
     </div>
-    <div class="col-md-4 d-flex align-items-center">
+    <div class="col-md-3 d-flex align-items-center">
       <div class="btn-group" role="group" aria-label="Band">
         <button type="button" id="btn-high" class="btn btn-outline-light active">High (Above FL260)</button>
         <button type="button" id="btn-low" class="btn btn-outline-light">Low (AAB FL260)</button>
       </div>
     </div>
-    <div class="col-md-4 text-md-end">
+    <div class="col-md-6 text-md-end d-flex flex-wrap justify-content-md-end align-items-center gap-2">
       {% if can_create_split %}
-        <button id="create-split" class="btn btn-outline-info btn-sm me-2">
-          <i class="bi bi-pencil-square"></i> Create custom split
+        <button id="create-split" class="btn btn-outline-info btn-sm">
+          <i class="bi bi-pencil-square"></i> Create Custom Split
         </button>
+        <button id="save-split" class="btn btn-outline-success btn-sm">
+          <i class="bi bi-floppy"></i> Save Split
+        </button>
+        <button id="delete-split" class="btn btn-outline-danger btn-sm">
+          <i class="bi bi-trash"></i> Delete
+        </button>
+        <form id="delete-split-form" action="/airspace/splits/delete" method="POST" class="d-none">
+          <input type="hidden" name="name" id="delete-split-name">
+        </form>
       {% endif %}
       <button id="copy-link" class="btn btn-outline-light btn-sm">
-        <i class="bi bi-link-45deg"></i> Copy link
+        <i class="bi bi-link-45deg"></i> Copy Link
       </button>
     </div>
   </div>
+
+  {% if can_create_split %}
+    <div class="modal fade" id="saveSplitModal" tabindex="-1" aria-labelledby="saveSplitModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <form action="/airspace/splits/save" method="POST">
+            <div class="modal-header">
+              <h5 class="modal-title" id="saveSplitModalLabel">Save current split</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <input type="hidden" name="config" id="save-split-config">
+              <div class="mb-3">
+                <label for="save-split-name" class="form-label">Split name</label>
+                <input type="text" class="form-control" name="name" id="save-split-name" required>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+              <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  {% endif %}
 
   <div id="split-map" class="shadow-sm"></div>
 
@@ -527,6 +569,35 @@
         createSplitBtn.addEventListener('click', () => {
           populateCustomModal(getActiveSplit());
           getCustomModal().show();
+        });
+      }
+
+      const saveSplitBtn = document.getElementById('save-split');
+      const saveSplitModalEl = document.getElementById('saveSplitModal');
+      let saveSplitModal = null;
+      function getSaveSplitModal() {
+        if (!saveSplitModalEl) return null;
+        if (!saveSplitModal) saveSplitModal = new bootstrap.Modal(saveSplitModalEl);
+        return saveSplitModal;
+      }
+      if (saveSplitBtn) {
+        saveSplitBtn.addEventListener('click', () => {
+          const split = activeSplit === 'custom' && customSplit ? customSplit : config.splits[activeSplit];
+          if (split) {
+            document.getElementById('save-split-config').value = JSON.stringify(split);
+            getSaveSplitModal().show();
+          }
+        });
+      }
+
+      const deleteSplitBtn = document.getElementById('delete-split');
+      if (deleteSplitBtn) {
+        deleteSplitBtn.addEventListener('click', () => {
+          const name = document.getElementById('split-select').value;
+          if (name && confirm(`Delete split "${name}"?`)) {
+            document.getElementById('delete-split-name').value = name;
+            document.getElementById('delete-split-form').submit();
+          }
         });
       }
 

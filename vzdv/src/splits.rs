@@ -28,8 +28,14 @@ pub struct FrequencyConfig {
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct SectorsConfig {
+    pub frequencies: HashMap<String, FrequencyConfig>,
+    pub areas: HashMap<String, Vec<SectorId>>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ConfigSplits {
-    pub default_split: String,
     pub frequencies: HashMap<String, FrequencyConfig>,
     pub areas: HashMap<String, Vec<SectorId>>,
     pub splits: IndexMap<String, SectorSplit>,
