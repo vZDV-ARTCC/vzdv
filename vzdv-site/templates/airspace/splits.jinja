@@ -375,10 +375,6 @@
         if (visibleLayers.length > 0) {
           map.fitBounds(L.featureGroup(visibleLayers).getBounds().pad(0.05));
         }
-
-        if (split) {
-          buildLegend(getVisibleControllers(split));
-        }
       }
 
       function updateURL() {
