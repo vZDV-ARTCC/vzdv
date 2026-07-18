@@ -975,10 +975,13 @@ async fn post_assign_event_enroute_sector_split(
         .execute(&state.db)
         .await?;
 
+    let cid = user_info
+        .map(|i| i.cid.to_string())
+        .unwrap_or("UNKNOWN_CID".to_string());
     record_log(
         format!(
-            "Assigned enroute sector split {} to event {}",
-            form.split_name, id
+            "{} assigned enroute sector split {} to event {}",
+            cid, form.split_name, id
         ),
         &state.db,
         true,
@@ -1013,8 +1016,14 @@ async fn post_remove_event_enroute_sector_split(
         .execute(&state.db)
         .await?;
 
+    let cid = user_info
+        .map(|i| i.cid.to_string())
+        .unwrap_or("UNKNOWN_CID".to_string());
     record_log(
-        format!("Removed enroute sector split assignment from event {id}"),
+        format!(
+            "{} removed enroute sector split assignment from event {id}",
+            cid
+        ),
         &state.db,
         true,
     )

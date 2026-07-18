@@ -614,7 +614,15 @@ async fn post_save_split(
         .execute(&state.db)
         .await?;
 
-    record_log(format!("Saved enroute split '{}'", name), &state.db, true).await?;
+    let cid = user_info
+        .map(|i| i.cid.to_string())
+        .unwrap_or("UNKNOWN_CID".to_string());
+    record_log(
+        format!("{} saved enroute split '{}'", cid, name),
+        &state.db,
+        true,
+    )
+    .await?;
     flashed_messages::push_flashed_message(
         session,
         flashed_messages::MessageLevel::Success,
@@ -663,7 +671,15 @@ async fn post_delete_split(
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
-        record_log(format!("Deleted enroute split '{}'", name), &state.db, true).await?;
+        let cid = user_info
+            .map(|i| i.cid.to_string())
+            .unwrap_or("UNKNOWN_CID".to_string());
+        record_log(
+            format!("{} deleted enroute split '{}'", cid, name),
+            &state.db,
+            true,
+        )
+        .await?;
         flashed_messages::push_flashed_message(
             session,
             flashed_messages::MessageLevel::Success,
