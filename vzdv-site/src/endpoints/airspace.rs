@@ -603,7 +603,18 @@ async fn post_save_split(
         return Ok(redirect);
     }
     let name = form.name.trim().to_string();
-    if name.is_empty() {
+    if name.is_empty()
+        || name.len() > 20
+        || name.contains('&')
+        || name.contains('?')
+        || name.contains('@')
+    {
+        flashed_messages::push_flashed_message(
+            session,
+            flashed_messages::MessageLevel::Error,
+            "Split name must be 1-20 characters and cannot contain &, ?, or @",
+        )
+        .await?;
         return Ok(Redirect::to("/airspace/splits"));
     }
     // Ensure the config is valid JSON before saving.

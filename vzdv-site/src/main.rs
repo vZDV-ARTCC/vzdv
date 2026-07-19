@@ -122,6 +122,7 @@ fn load_templates() -> Result<Environment<'static>, AppError> {
             .timestamp()
             .to_string()
     });
+    env.add_filter("urlencode", |s: String| urlencoding::encode(&s).to_string());
 
     Ok(env)
 }

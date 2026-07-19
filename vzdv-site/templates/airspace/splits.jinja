@@ -78,9 +78,12 @@
   <h2 class="mb-3">Enroute Sector Splits</h2>
 
   {% if event_split %}
-    <div class="alert alert-info d-flex align-items-center" role="alert">
-      <i class="bi bi-info-circle me-2"></i>
-      <div><strong>{{ event_split }}</strong> is the current event split.</div>
+    <div class="alert alert-info d-flex align-items-center justify-content-between" role="alert">
+      <div class="d-flex align-items-center">
+        <i class="bi bi-info-circle me-2"></i>
+        <div><strong>{{ event_split }}</strong> is the current event split.</div>
+      </div>
+      <a href="/airspace/splits?split={{ event_split | urlencode }}" class="btn btn-sm btn-primary">View</a>
     </div>
   {% endif %}
 
@@ -133,7 +136,7 @@
               <input type="hidden" name="config" id="save-split-config">
               <div class="mb-3">
                 <label for="save-split-name" class="form-label">Split name</label>
-                <input type="text" class="form-control" name="name" id="save-split-name" required>
+                <input type="text" class="form-control" name="name" id="save-split-name" required maxlength="20" pattern="[^&?@]*">
               </div>
             </div>
             <div class="modal-footer">
