@@ -194,6 +194,11 @@ function render() {
     labelLayers[band] = labels;
   }
 
+  const hasLowSplit = Object.keys(split.low || {}).length > 0;
+  const toggleCol = document.getElementById("band-toggle-col");
+  if (toggleCol) toggleCol.classList.toggle("d-none", !hasLowSplit);
+  if (!hasLowSplit) showLow = false;
+
   activeColorMap = bandColorMaps[showLow ? "low" : "high"] || {};
   syncBandToggle(split);
 }

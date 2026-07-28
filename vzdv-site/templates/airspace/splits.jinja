@@ -87,8 +87,8 @@
     </div>
   {% endif %}
 
-  <div class="row g-3 mb-3 align-items-end">
-    <div class="col-md-3">
+  <div class="row g-3 mb-3 align-items-end flex-md-nowrap">
+    <div class="col-md-auto" style="min-width: 220px;">
       <label for="split-select" class="form-label">Split configuration</label>
       <select id="split-select" class="form-select">
         {% for name in split_names %}
@@ -96,13 +96,13 @@
         {% endfor %}
       </select>
     </div>
-    <div class="col-md-3 d-flex align-items-center">
+    <div class="col-md-auto d-flex align-items-center" id="band-toggle-col">
       <div class="btn-group" role="group" aria-label="Band">
         <button type="button" id="btn-high" class="btn btn-outline-light active">High (Above FL260)</button>
         <button type="button" id="btn-low" class="btn btn-outline-light">Low (AAB FL260)</button>
       </div>
     </div>
-    <div class="col-md-6 text-md-end d-flex flex-wrap justify-content-md-end align-items-center gap-2">
+    <div class="col-12 col-md ms-md-auto text-md-end d-flex flex-wrap justify-content-md-end align-items-center gap-2">
       {% if can_create_split %}
         <button id="create-split" class="btn btn-outline-info btn-sm">
           <i class="bi bi-pencil-square"></i> Create Custom Split
