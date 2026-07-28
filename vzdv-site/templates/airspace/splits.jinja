@@ -1,6 +1,6 @@
 {% extends "_layout.jinja" %}
 
-{% block title %}Enroute Sector Splits | vZDV{% endblock %}
+{% block title %}Enroute Sector Splits | {{ super() }}{% endblock %}
 
 {% block extra_head %}
   <link
@@ -198,8 +198,8 @@
   {% endif %}
 
   <script type="application/json" id="splits-config">{{ splits_json | safe }}</script>
-  <script id="geojson-url">{{ geojson_url }}</script>
-  <script id="current-split">{{ current_split | safe }}</script>
+  <script type="text/plain" id="geojson-url">{{ geojson_url }}</script>
+  <script type="text/plain" id="current-split">{{ current_split | safe }}</script>
 
   <script src="/static/splits.js" defer></script>
 {% endblock %}
