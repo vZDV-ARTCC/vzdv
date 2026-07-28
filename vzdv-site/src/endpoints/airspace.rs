@@ -570,6 +570,7 @@ async fn page_splits(
         }
     };
     let splits_json = serde_json::to_string(&splits)?;
+    let flashed_messages = flashed_messages::drain_flashed_messages(session).await?;
     let template = state.templates.get_template("airspace/splits.jinja")?;
     let rendered = template.render(context! {
         user_info,
@@ -579,6 +580,7 @@ async fn page_splits(
         split_names,
         splits_json,
         geojson_url => "/static/zdv.geojson",
+        flashed_messages,
     })?;
     Ok(Html(rendered))
 }
