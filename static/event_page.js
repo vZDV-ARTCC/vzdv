@@ -16,9 +16,8 @@ document.querySelectorAll(".event-time").forEach((element) => {
   const dom = date.getDate().toString().padStart(2, "0");
   const hour = date.getHours().toString().padStart(2, "0");
   const minute = date.getMinutes().toString().padStart(2, "0");
-  document.getElementById(
-    element.getAttribute("updateTarget")
-  ).value = `${year}-${month}-${dom}T${hour}:${minute}`;
+  document.getElementById(element.getAttribute("updateTarget")).value =
+    `${year}-${month}-${dom}T${hour}:${minute}`;
 });
 
 document.getElementById("input-timezone").value =
@@ -63,6 +62,16 @@ document.querySelectorAll(".btn-position-set").forEach((button) => {
   });
 });
 
+document.querySelectorAll(".btn-cic-position-set").forEach((button) => {
+  button.addEventListener("click", () => {
+    document.getElementById("set-cic-position-id").value =
+      button.getAttribute("position_id");
+    document.getElementById("cic-controller").value =
+      button.getAttribute("controller_id");
+    document.getElementById("modalSetCicPosition").showModal();
+  });
+});
+
 // can't nest forms in HTML
 document
   .getElementById("btn-modal-register-unregister")
@@ -70,7 +79,7 @@ document
     e.preventDefault();
     const eventId = e.target.getAttribute("event-id");
     const result = window.confirm(
-      "Are you sure you want to remove yourself from this event?"
+      "Are you sure you want to remove yourself from this event?",
     );
     if (result) {
       fetch(`/events/${eventId}/unregister`, { method: "POST" })
@@ -113,6 +122,15 @@ document
     e.preventDefault();
     document.getElementById("modalSetPosition").close();
     document.getElementById("set-position-id").value = "";
+  });
+
+document
+  .getElementById("btn-modal-set-cic-position-close")
+  ?.addEventListener("click", (e) => {
+    e.preventDefault();
+    document.getElementById("modalSetCicPosition").close();
+    document.getElementById("set-cic-position-id").value = "";
+    document.getElementById("cic-controller").value = "0";
   });
 
 document

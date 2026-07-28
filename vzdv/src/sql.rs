@@ -584,8 +584,15 @@ pub const CREATE_EVENT: &str = "INSERT INTO event VALUES (NULL, $1, FALSE, $2, $
 pub const UPDATE_EVENT: &str = "UPDATE event SET name=$2, published=$3, start=$4, end=$5, description=$6, image_url=$7 where id=$1";
 
 pub const GET_CIC_POSITIONS_BY_EVENT: &str = "SELECT * FROM event_cic_positions WHERE event_id=$1";
-pub const INSERT_EVENT_CIC_POSITIONS: &str = "INSERT INTO event_cic_positions (event_id, category) VALUES ($1, 'CAB'), ($1, 'TRACON'), ($1, 'Enroute')";
-pub const ASSIGN_EVENT_CIC_POSITION: &str = "UPDATE event_cic_positions SET cid=$2 WHERE event_id=$1 AND category=$3";
+pub const INSERT_DEFAULT_EVENT_CIC_POSITIONS: &str = "INSERT INTO event_cic_positions (event_id, category) VALUES ($1, 'CAB'), ($1, 'TRACON'), ($1, 'Enroute')";
+pub const INSERT_NEW_CIC_POSITION_CATEGORY: &str =
+    "INSERT INTO event_cic_positions (event_id, category) VALUES ($1, $2)";
+pub const ASSIGN_EVENT_CIC_POSITION: &str =
+    "UPDATE event_cic_positions SET cid=$3 WHERE event_id=$1 AND id=$2";
+pub const DELETE_EVENT_CIC_POSITION: &str =
+    "DELETE FROM event_cic_positions WHERE event_id=$1 AND id=$2";
+pub const DELETE_EVENT_CIC_POSITIONS_FOR: &str =
+    "DELETE FROM event_cic_positions WHERE event_id=$1";
 
 pub const GET_EVENT_REGISTRATION_FOR: &str =
     "SELECT * FROM event_registration WHERE event_id=$1 AND cid=$2";
@@ -617,6 +624,8 @@ pub const DELETE_EVENT_POSITIONS_FOR: &str = "DELETE FROM event_position WHERE e
 pub const UPDATE_EVENT_POSITION_CONTROLLER: &str = "UPDATE event_position SET cid=$2 WHERE id=$1";
 pub const CLEAR_CID_FROM_EVENT_POSITIONS: &str =
     "UPDATE event_position SET cid=NULL WHERE event_id=$1 AND cid=$2";
+pub const CLEAR_CID_FROM_EVENT_CIC_POSITIONS: &str =
+    "UPDATE event_cic_positions SET cid=NULL WHERE event_id=$1 AND cid=$2";
 
 pub const GET_STAFF_NOTES_FOR: &str = "SELECT * FROM staff_note WHERE cid=$1";
 pub const GET_STAFF_NOTE: &str = "SELECT * FROM staff_note WHERE id=$1";

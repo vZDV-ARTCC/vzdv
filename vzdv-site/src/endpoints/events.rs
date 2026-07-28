@@ -173,6 +173,7 @@ async fn post_new_event_form(
     let start = js_timestamp_to_utc(&event.start, "UTC")?;
     let end = js_timestamp_to_utc(&event.end, "UTC")?;
 
+    let mut tx = state.db.begin().await?;
     let result = sqlx::query(sql::CREATE_EVENT)
         .bind(cid)
         .bind(&event.name)
@@ -180,8 +181,13 @@ async fn post_new_event_form(
         .bind(end)
         .bind(event.description)
         .bind(event.banner)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
+    sqlx::query(sql::INSERT_DEFAULT_EVENT_CIC_POSITIONS)
+        .bind(result.last_insert_rowid())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     record_log(
         format!(
             "{cid} created new event {}: \"{}\"",
@@ -253,7 +259,9 @@ async fn page_event(
         p
     };
     let positions = event_positions_extra(&positions_raw, &state.db).await?;
+    let cic_positions = event_cic_positions(&state.db, event.id).await?;
     let registrations = event_registrations_extra(event.id, &positions_raw, &state.db).await?;
+    let registered_controllers = event_registered_controllers(event.id, &state.db).await?;
     let all_controllers: Vec<Controller> = sqlx::query_as(sql::GET_ALL_CONTROLLERS_ON_ROSTER)
         .fetch_all(&state.db)
         .await?;
@@ -293,8 +301,10 @@ async fn page_event(
         user_info,
         event,
         positions,
+        cic_positions,
         positions_raw,
         registrations,
+        registered_controllers,
         all_controllers,
         self_register,
         is_on_roster => user_controller.map(|c| c.is_on_roster).unwrap_or_default(),
@@ -348,7 +358,9 @@ async fn event_positions_extra(
 
 #[derive(Serialize)]
 struct EventCicPositionDisplay {
+    id: u32,
     category: String,
+    cid: Option<u32>,
     controller: String,
 }
 
@@ -364,7 +376,9 @@ async fn event_cic_positions(
     let mut ret = Vec::with_capacity(positions.len());
     for position in positions {
         ret.push(EventCicPositionDisplay {
+            id: position.id,
             category: position.category,
+            cid: position.cid,
             controller: match position.cid {
                 Some(cid) => {
                     let controller = sqlx::query_as::<_, Controller>(sql::GET_CONTROLLER_BY_CID)
@@ -380,6 +394,28 @@ async fn event_cic_positions(
     }
     ret.sort_by(|a, b| a.category.cmp(&b.category));
     Ok(ret)
+}
+
+async fn event_registered_controllers(
+    event_id: u32,
+    db: &Pool<Sqlite>,
+) -> Result<Vec<(u32, String)>, AppError> {
+    let registrations: Vec<EventRegistration> = sqlx::query_as(sql::GET_EVENT_REGISTRATIONS)
+        .bind(event_id)
+        .fetch_all(db)
+        .await?;
+    let mut controllers = Vec::with_capacity(registrations.len());
+    for registration in registrations {
+        if let Some(controller) = sqlx::query_as::<_, Controller>(sql::GET_CONTROLLER_BY_CID)
+            .bind(registration.cid)
+            .fetch_optional(db)
+            .await?
+        {
+            controllers.push((controller.cid, format_controller_name(&controller)));
+        }
+    }
+    controllers.sort_by(|a, b| a.1.cmp(&b.1));
+    Ok(controllers)
 }
 
 #[derive(Serialize)]
@@ -587,6 +623,10 @@ async fn api_delete_event(
             .bind(id)
             .execute(&mut *tx)
             .await?;
+        sqlx::query(sql::DELETE_EVENT_CIC_POSITIONS_FOR)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query(sql::DELETE_EVENT)
             .bind(id)
             .execute(&mut *tx)
@@ -713,6 +753,11 @@ async fn api_register_unregister(
     }
     // remove the controller from any positions in this event
     sqlx::query(sql::CLEAR_CID_FROM_EVENT_POSITIONS)
+        .bind(id)
+        .bind(cid)
+        .execute(&state.db)
+        .await?;
+    sqlx::query(sql::CLEAR_CID_FROM_EVENT_CIC_POSITIONS)
         .bind(id)
         .bind(cid)
         .execute(&state.db)
@@ -932,6 +977,134 @@ async fn post_set_position(
     }
 }
 
+#[derive(Deserialize)]
+struct SetCicPositionForm {
+    position_id: u32,
+    controller: u32,
+}
+
+#[derive(Deserialize)]
+struct AddCicPositionForm {
+    category: String,
+}
+
+async fn post_set_cic_position(
+    State(state): State<Arc<AppState>>,
+    session: Session,
+    Path(id): Path<u32>,
+    Form(cic_position_data): Form<SetCicPositionForm>,
+) -> Result<Redirect, AppError> {
+    let user_info: Option<UserInfo> = session.get(SESSION_USER_INFO_KEY).await?;
+    if let Some(redirect) = reject_if_not_in(&state, &user_info, PermissionsGroup::EventsTeam).await
+    {
+        return Ok(redirect);
+    }
+    let event: Option<Event> = sqlx::query_as(sql::GET_EVENT)
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?;
+    if event.is_none() {
+        return Ok(Redirect::to("/"));
+    }
+
+    let cid = (cic_position_data.controller != 0).then_some(cic_position_data.controller);
+    if let Some(cid) = cid {
+        let is_registered = sqlx::query_as::<_, EventRegistration>(sql::GET_EVENT_REGISTRATION_FOR)
+            .bind(id)
+            .bind(cid)
+            .fetch_optional(&state.db)
+            .await?
+            .is_some();
+        if !is_registered {
+            return Ok(Redirect::to(&format!("/events/{id}")));
+        }
+    }
+    sqlx::query(sql::ASSIGN_EVENT_CIC_POSITION)
+        .bind(id)
+        .bind(cic_position_data.position_id)
+        .bind(cid)
+        .execute(&state.db)
+        .await?;
+    record_log(
+        format!(
+            "{} updated event {id} CIC position {} to cid {}",
+            user_info.unwrap().cid,
+            cic_position_data.position_id,
+            cid.unwrap_or_default()
+        ),
+        &state.db,
+        true,
+    )
+    .await?;
+    Ok(Redirect::to(&format!("/events/{id}")))
+}
+
+async fn post_add_cic_position(
+    State(state): State<Arc<AppState>>,
+    session: Session,
+    Path(id): Path<u32>,
+    Form(cic_position_data): Form<AddCicPositionForm>,
+) -> Result<Redirect, AppError> {
+    let user_info: Option<UserInfo> = session.get(SESSION_USER_INFO_KEY).await?;
+    if let Some(redirect) = reject_if_not_in(&state, &user_info, PermissionsGroup::EventsTeam).await
+    {
+        return Ok(redirect);
+    }
+    let category = cic_position_data.category.trim();
+    if category.is_empty() {
+        return Ok(Redirect::to(&format!("/events/{id}")));
+    }
+    let event: Option<Event> = sqlx::query_as(sql::GET_EVENT)
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?;
+    if event.is_none() {
+        return Ok(Redirect::to("/"));
+    }
+    sqlx::query(sql::INSERT_NEW_CIC_POSITION_CATEGORY)
+        .bind(id)
+        .bind(category)
+        .execute(&state.db)
+        .await?;
+    record_log(
+        format!(
+            "{} added {category} CIC position to event {id}",
+            user_info.unwrap().cid
+        ),
+        &state.db,
+        true,
+    )
+    .await?;
+    Ok(Redirect::to(&format!("/events/{id}")))
+}
+
+async fn post_delete_cic_position(
+    State(state): State<Arc<AppState>>,
+    session: Session,
+    Path((id, pos_id)): Path<(u32, u32)>,
+) -> Result<Redirect, AppError> {
+    let user_info: Option<UserInfo> = session.get(SESSION_USER_INFO_KEY).await?;
+    if let Some(redirect) = reject_if_not_in(&state, &user_info, PermissionsGroup::EventsTeam).await
+    {
+        return Ok(redirect);
+    }
+    sqlx::query(sql::DELETE_EVENT_CIC_POSITION)
+        .bind(id)
+        .bind(pos_id)
+        .execute(&state.db)
+        .await?;
+    record_log(
+        format!(
+            "{} removed CIC position {pos_id} from event {id}",
+            user_info.unwrap().cid
+        ),
+        &state.db,
+        true,
+    )
+    .await?;
+    Ok(Redirect::to(&format!("/events/{id}")))
+}
+
 #[derive(Debug, Deserialize)]
 struct NoShowForm {
     cid: u32,
@@ -1005,5 +1178,11 @@ pub fn router() -> Router<Arc<AppState>> {
             post(post_delete_position),
         )
         .route("/events/{id}/set_position", post(post_set_position))
+        .route("/events/{id}/set_cic_position", post(post_set_cic_position))
+        .route("/events/{id}/add_cic_position", post(post_add_cic_position))
+        .route(
+            "/events/{id}/delete_cic_position/{pos_id}",
+            post(post_delete_cic_position),
+        )
         .route("/events/{id}/no_show", post(post_no_show))
 }
