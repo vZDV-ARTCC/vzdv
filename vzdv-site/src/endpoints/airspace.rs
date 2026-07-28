@@ -585,7 +585,10 @@ async fn page_splits(
 
 #[derive(Debug, Deserialize)]
 struct SaveSplitForm {
+    #[serde(default)]
     name: String,
+    #[serde(default)]
+    overwrite_name: String,
     config: String,
 }
 
@@ -601,7 +604,22 @@ async fn post_save_split(
     {
         return Ok(redirect);
     }
-    let name = form.name.trim().to_string();
+    let new_name = form.name.trim().to_string();
+    let overwrite_name = form.overwrite_name.trim().to_string();
+    if !new_name.is_empty() && !overwrite_name.is_empty() {
+        flashed_messages::push_flashed_message(
+            session,
+            flashed_messages::MessageLevel::Error,
+            "Enter a new split name or choose an existing split to overwrite, not both",
+        )
+        .await?;
+        return Ok(Redirect::to("/airspace/splits"));
+    }
+    let name = if !overwrite_name.is_empty() {
+        overwrite_name
+    } else {
+        new_name
+    };
     if name.is_empty()
         || name.len() > 20
         || name.contains('&')

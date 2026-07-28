@@ -135,8 +135,20 @@
             <div class="modal-body">
               <input type="hidden" name="config" id="save-split-config">
               <div class="mb-3">
-                <label for="save-split-name" class="form-label">Split name</label>
-                <input type="text" class="form-control" name="name" id="save-split-name" required maxlength="20" pattern="[^&?@]*">
+                <label for="save-split-overwrite" class="form-label">Overwrite an existing split</label>
+                <select class="form-select" name="overwrite_name" id="save-split-overwrite">
+                  <option value="">-- Save as a new split --</option>
+                  {% for name in split_names %}
+                    <option value="{{ name }}">{{ name }}</option>
+                  {% endfor %}
+                </select>
+                <div class="form-text">
+                  Choose a split above to overwrite it, or leave this as "Save as a new split" and give it a name below.
+                </div>
+              </div>
+              <div class="mb-3">
+                <label for="save-split-name" class="form-label">New split name</label>
+                <input type="text" class="form-control" name="name" id="save-split-name" maxlength="20" pattern="[^&?@]*">
               </div>
             </div>
             <div class="modal-footer">

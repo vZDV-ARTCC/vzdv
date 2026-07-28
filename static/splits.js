@@ -424,6 +424,38 @@ if (saveSplitBtn) {
   });
 }
 
+const saveSplitOverwriteSelect = document.getElementById(
+  "save-split-overwrite",
+);
+const saveSplitNameInput = document.getElementById("save-split-name");
+const saveSplitForm = saveSplitModalEl
+  ? saveSplitModalEl.querySelector("form")
+  : null;
+if (saveSplitOverwriteSelect && saveSplitNameInput) {
+  saveSplitOverwriteSelect.addEventListener("change", () => {
+    const overwriting = saveSplitOverwriteSelect.value !== "";
+    saveSplitNameInput.disabled = overwriting;
+    if (overwriting) saveSplitNameInput.value = "";
+  });
+  saveSplitNameInput.addEventListener("input", () => {
+    const typing = saveSplitNameInput.value.trim() !== "";
+    saveSplitOverwriteSelect.disabled = typing;
+    if (typing) saveSplitOverwriteSelect.value = "";
+  });
+}
+if (saveSplitForm) {
+  saveSplitForm.addEventListener("submit", (e) => {
+    const overwrite = saveSplitOverwriteSelect
+      ? saveSplitOverwriteSelect.value.trim()
+      : "";
+    const name = saveSplitNameInput ? saveSplitNameInput.value.trim() : "";
+    if (!overwrite && !name) {
+      e.preventDefault();
+      alert("Enter a new split name or choose an existing split to overwrite.");
+    }
+  });
+}
+
 const deleteSplitBtn = document.getElementById("delete-split");
 if (deleteSplitBtn) {
   deleteSplitBtn.addEventListener("click", () => {
