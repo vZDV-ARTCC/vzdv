@@ -3,7 +3,10 @@
 use crate::{
     flashed_messages,
     flights::get_relevant_flights,
-    shared::{AppError, AppState, CacheEntry, SESSION_USER_INFO_KEY, UserInfo, record_log},
+    shared::{
+        AppError, AppState, CacheEntry, SESSION_USER_INFO_KEY, UserInfo, is_user_member_of,
+        record_log, reject_if_not_in,
+    },
 };
 use axum::{
     Form, Router,
@@ -11,6 +14,8 @@ use axum::{
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
+use chrono::Utc;
+use indexmap::IndexMap;
 use itertools::Itertools;
 use log::warn;
 use minijinja::context;
@@ -27,9 +32,11 @@ use tokio::task::JoinSet;
 use tower_sessions::Session;
 use vatsim_utils::{live_api::Vatsim, rest_api::get_ratings_times};
 use vzdv::{
-    GENERAL_HTTP_CLIENT,
+    GENERAL_HTTP_CLIENT, PermissionsGroup,
     aviation::parse_metar,
     kden::{determine_runway_config, fetch_runway_assignments, wind_components},
+    splits::{ConfigSplits, SectorSplit, SectorsConfig},
+    sql::EnrouteSectorSplit,
 };
 
 /// How far away from the selected airport to show pilots in the pilot glance page.
@@ -504,6 +511,213 @@ async fn page_denver_data(
     Ok(Html(rendered))
 }
 
+#[derive(Debug, Deserialize)]
+struct SplitQuery {
+    split: Option<String>,
+}
+
+/// Load the full split configuration (base frequencies/areas plus DB splits).
+async fn load_splits_from_db(
+    db: &sqlx::SqlitePool,
+    base: &SectorsConfig,
+) -> Result<ConfigSplits, AppError> {
+    let rows: Vec<EnrouteSectorSplit> = sqlx::query_as(vzdv::sql::GET_ALL_ENROUTE_SECTOR_SPLITS)
+        .fetch_all(db)
+        .await?;
+    let mut splits = IndexMap::new();
+    for row in rows {
+        let split: SectorSplit = serde_json::from_str(&row.config)?;
+        splits.insert(row.name, split);
+    }
+    Ok(ConfigSplits {
+        frequencies: base.frequencies.clone(),
+        areas: base.areas.clone(),
+        splits,
+    })
+}
+
+/// Return the name of the enroute split assigned to an event happening now, if any.
+async fn active_event_split_name(db: &sqlx::SqlitePool) -> Result<Option<String>, AppError> {
+    let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let row: Option<(String,)> = sqlx::query_as(vzdv::sql::GET_ACTIVE_EVENT_ENROUTE_SPLIT)
+        .bind(&now)
+        .bind(&now)
+        .fetch_optional(db)
+        .await?;
+    Ok(row.map(|r| r.0))
+}
+
+/// Map view of configured sector splits.
+async fn page_splits(
+    State(state): State<Arc<AppState>>,
+    session: Session,
+    Query(query): Query<SplitQuery>,
+) -> Result<Html<String>, AppError> {
+    let user_info: Option<UserInfo> = session.get(SESSION_USER_INFO_KEY).await?;
+    let can_create_split =
+        is_user_member_of(&state, &user_info, PermissionsGroup::EventsTeam).await;
+    let splits = load_splits_from_db(&state.db, &state.sectors_config).await?;
+    let split_names: Vec<String> = splits.splits.keys().cloned().collect();
+    let event_split = active_event_split_name(&state.db).await?;
+    let current_split = match query.split {
+        Some(s) => s,
+        None => {
+            if let Some(event_split) = event_split.clone() {
+                event_split
+            } else {
+                split_names.first().cloned().unwrap_or_default()
+            }
+        }
+    };
+    let splits_json = serde_json::to_string(&splits)?;
+    let template = state.templates.get_template("airspace/splits.jinja")?;
+    let rendered = template.render(context! {
+        user_info,
+        can_create_split,
+        current_split,
+        event_split,
+        split_names,
+        splits_json,
+        geojson_url => "/static/zdv.geojson",
+    })?;
+    Ok(Html(rendered))
+}
+
+#[derive(Debug, Deserialize)]
+struct SaveSplitForm {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    overwrite_name: String,
+    config: String,
+}
+
+/// Persist the current split configuration to the database.
+async fn post_save_split(
+    State(state): State<Arc<AppState>>,
+    session: Session,
+    Form(form): Form<SaveSplitForm>,
+) -> Result<Redirect, AppError> {
+    let user_info: Option<UserInfo> = session.get(SESSION_USER_INFO_KEY).await?;
+    if let Some(redirect) =
+        reject_if_not_in(&state, &user_info, vzdv::PermissionsGroup::EventsTeam).await
+    {
+        return Ok(redirect);
+    }
+    let new_name = form.name.trim().to_string();
+    let overwrite_name = form.overwrite_name.trim().to_string();
+    if !new_name.is_empty() && !overwrite_name.is_empty() {
+        flashed_messages::push_flashed_message(
+            session,
+            flashed_messages::MessageLevel::Error,
+            "Enter a new split name or choose an existing split to overwrite, not both",
+        )
+        .await?;
+        return Ok(Redirect::to("/airspace/splits"));
+    }
+    let name = if !overwrite_name.is_empty() {
+        overwrite_name
+    } else {
+        new_name
+    };
+    if name.is_empty()
+        || name.len() > 20
+        || name.contains('&')
+        || name.contains('?')
+        || name.contains('@')
+    {
+        flashed_messages::push_flashed_message(
+            session,
+            flashed_messages::MessageLevel::Error,
+            "Split name must be 1-20 characters and cannot contain &, ?, or @",
+        )
+        .await?;
+        return Ok(Redirect::to("/airspace/splits"));
+    }
+    // Ensure the config is valid JSON before saving.
+    let _: SectorSplit = serde_json::from_str(&form.config)?;
+    sqlx::query(vzdv::sql::UPSERT_ENROUTE_SECTOR_SPLIT)
+        .bind(&name)
+        .bind(&form.config)
+        .execute(&state.db)
+        .await?;
+
+    let cid = user_info
+        .map(|i| i.cid.to_string())
+        .unwrap_or("UNKNOWN_CID".to_string());
+    record_log(
+        format!("{} saved enroute split '{}'", cid, name),
+        &state.db,
+        true,
+    )
+    .await?;
+    flashed_messages::push_flashed_message(
+        session,
+        flashed_messages::MessageLevel::Success,
+        &format!("Split '{}' saved", name),
+    )
+    .await?;
+    Ok(Redirect::to(&format!("/airspace/splits?split={}", name)))
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteSplitForm {
+    name: String,
+}
+
+/// Delete an enroute split configuration from the database.
+async fn post_delete_split(
+    State(state): State<Arc<AppState>>,
+    session: Session,
+    Form(form): Form<DeleteSplitForm>,
+) -> Result<Redirect, AppError> {
+    let user_info: Option<UserInfo> = session.get(SESSION_USER_INFO_KEY).await?;
+    if let Some(redirect) =
+        reject_if_not_in(&state, &user_info, vzdv::PermissionsGroup::EventsTeam).await
+    {
+        return Ok(redirect);
+    }
+    let name = form.name.trim();
+    if !name.is_empty() {
+        let split_id: Option<(u32,)> =
+            sqlx::query_as("SELECT id FROM enroute_sector_split WHERE name = $1")
+                .bind(name)
+                .fetch_optional(&state.db)
+                .await?;
+        let Some((split_id,)) = split_id else {
+            return Ok(Redirect::to("/"));
+        };
+        let mut tx = state.db.begin().await?;
+        // delete from event assignments first
+        sqlx::query("DELETE FROM event_enroute_sector_split_assignment WHERE split_id = $1")
+            .bind(split_id)
+            .execute(&mut *tx)
+            .await?;
+        // now delete the split
+        sqlx::query("DELETE FROM enroute_sector_split WHERE id = $1")
+            .bind(split_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        let cid = user_info
+            .map(|i| i.cid.to_string())
+            .unwrap_or("UNKNOWN_CID".to_string());
+        record_log(
+            format!("{} deleted enroute split '{}'", cid, name),
+            &state.db,
+            true,
+        )
+        .await?;
+        flashed_messages::push_flashed_message(
+            session,
+            flashed_messages::MessageLevel::Success,
+            &format!("Split '{}' deleted", name),
+        )
+        .await?;
+    }
+    Ok(Redirect::to("/airspace/splits"))
+}
+
 /// This file's routes and templates.
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -519,4 +733,7 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/airspace/KDEN", get(page_denver))
         .route("/airspace/KDEN/data", get(page_denver_data))
+        .route("/airspace/splits", get(page_splits))
+        .route("/airspace/splits/save", post(post_save_split))
+        .route("/airspace/splits/delete", post(post_delete_split))
 }

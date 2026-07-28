@@ -21,6 +21,12 @@
     <h5 class="pt-3"><strong>Start:</strong> <span class="d-none event-time" updateTarget="editFormStart">{{ event.start }}</span></h5>
     <h5><strong>End:</strong> <span class="d-none event-time" updateTarget="editFormEnd">{{ event.end }}</span></h5>
     <p class="pt-3">{{ event.description }}</p>
+    {% if is_event_staff %}
+      <p class="text-muted">
+        <i class="bi bi-map"></i>
+        Assigned Enroute Split: <strong>{{ 'No split assigned' if not assigned_split else assigned_split.name }}</strong>
+      </p>
+    {% endif %}
     {% if event_not_over %}
       <div class="d-flex justify-content-between pb-3">
         {% if user_info and user_info.is_some_staff or is_on_roster %}
@@ -40,6 +46,10 @@
           <button role="button" class="btn btn-warning" onclick="modalNoShow.showModal()">
             <i class="bi bi-alarm"></i>
             No shows
+          </button>
+          <button role="button" class="btn btn-warning" onclick="modalAssignSplit.showModal()">
+            <i class="bi bi-map"></i>
+            Assign Enroute Split
           </button>
           <button role="button" class="btn btn-danger" id="button-delete" event-id="{{ event.id }}">
             <i class="bi bi-trash"></i>
@@ -346,5 +356,53 @@
     </div>
   </form>
 </dialog>
+
+<dialog id="modalAssignSplit">
+  <h2 class="pb-3">Assign Enroute Split</h2>
+  <form action="/events/{{ event.id }}/assign_enroute_sector_split" method="POST">
+    <div class="row">
+      <div class="col">
+        <input type="hidden" name="split_name" id="assign-split-name">
+        <div class="mb-3">
+          <label for="assign-split-id" class="form-label">Split</label>
+          <select class="form-select" name="split_id" id="assign-split-id" required>
+            <option value="">-- Select split --</option>
+            {% for split in enroute_splits %}
+              <option value="{{ split.id }}" data-name="{{ split.name }}" {% if assigned_split and assigned_split.id == split.id %}selected{% endif %}>{{ split.name }}</option>
+            {% endfor %}
+          </select>
+          <div class="form-text">
+            Need to make a custom split map? <a href="/airspace/splits" target="_blank">Click here to create one</a>.
+          </div>
+        </div>
+        <div class="d-flex justify-content-between">
+          <button class="btn btn-warning" type="button" onclick="modalAssignSplit.close()">Close</button>
+          <button class="btn btn-success" role="button" type="submit">Save</button>
+        </div>
+      </div>
+    </div>
+  </form>
+
+  <form action="/events/{{ event.id }}/remove_enroute_sector_split" method="POST" class="mt-2">
+    <button type="submit" class="btn btn-outline-danger" {% if not assigned_split %}disabled{% endif %}>
+      <i class="bi bi-x-circle"></i> Remove assignment
+    </button>
+  </form>
+</dialog>
+
+<script>
+  (function () {
+    const select = document.getElementById('assign-split-id');
+    const nameInput = document.getElementById('assign-split-name');
+    if (select && nameInput) {
+      function updateName() {
+        const opt = select.options[select.selectedIndex];
+        nameInput.value = opt ? opt.dataset.name : '';
+      }
+      select.addEventListener('change', updateName);
+      updateName();
+    }
+  })();
+</script>
 
 {% endblock %}

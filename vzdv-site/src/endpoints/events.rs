@@ -264,6 +264,16 @@ async fn page_event(
         })
         .sorted_by(|a, b| a.1.cmp(&b.1))
         .collect();
+    let enroute_splits: Vec<sql::EnrouteSectorSplit> =
+        sqlx::query_as(sql::GET_ALL_ENROUTE_SECTOR_SPLITS)
+            .fetch_all(&state.db)
+            .await?;
+    let assigned_split: Option<sql::EnrouteSectorSplit> =
+        sqlx::query_as(sql::GET_EVENT_ENROUTE_SECTOR_SPLIT)
+            .bind(event.id)
+            .fetch_optional(&state.db)
+            .await?;
+
     let template = state.templates.get_template("events/event.jinja")?;
     let self_register: Option<EventRegistration> = if let Some(user_info) = &user_info {
         sqlx::query_as(sql::GET_EVENT_REGISTRATION_FOR)
@@ -283,6 +293,8 @@ async fn page_event(
         positions_raw,
         registrations,
         all_controllers,
+        enroute_splits,
+        assigned_split,
         self_register,
         is_on_roster => user_controller.map(|c| c.is_on_roster).unwrap_or_default(),
         is_event_staff => not_staff_redirect.is_none(),
@@ -939,6 +951,93 @@ async fn post_no_show(
     Ok(Redirect::to(&format!("/events/{id}")))
 }
 
+#[derive(Debug, Deserialize)]
+struct AssignEventEnrouteSectorSplitForm {
+    split_id: u32,
+    split_name: String,
+}
+
+async fn post_assign_event_enroute_sector_split(
+    State(state): State<Arc<AppState>>,
+    session: Session,
+    Path(id): Path<u32>,
+    Form(form): Form<AssignEventEnrouteSectorSplitForm>,
+) -> Result<Redirect, AppError> {
+    let user_info: Option<UserInfo> = session.get(SESSION_USER_INFO_KEY).await?;
+    if let Some(redirect) = reject_if_not_in(&state, &user_info, PermissionsGroup::EventsTeam).await
+    {
+        return Ok(redirect);
+    }
+
+    sqlx::query(sql::UPSERT_EVENT_ENROUTE_SECTOR_SPLIT)
+        .bind(id)
+        .bind(form.split_id)
+        .execute(&state.db)
+        .await?;
+
+    let cid = user_info
+        .map(|i| i.cid.to_string())
+        .unwrap_or("UNKNOWN_CID".to_string());
+    record_log(
+        format!(
+            "{} assigned enroute sector split {} to event {}",
+            cid, form.split_name, id
+        ),
+        &state.db,
+        true,
+    )
+    .await?;
+
+    flashed_messages::push_flashed_message(
+        session,
+        flashed_messages::MessageLevel::Info,
+        &format!(
+            "Assigned enroute sector split {} to event {}",
+            form.split_name, id
+        ),
+    )
+    .await?;
+    Ok(Redirect::to(&format!("/events/{id}")))
+}
+
+async fn post_remove_event_enroute_sector_split(
+    State(state): State<Arc<AppState>>,
+    session: Session,
+    Path(id): Path<u32>,
+) -> Result<Redirect, AppError> {
+    let user_info: Option<UserInfo> = session.get(SESSION_USER_INFO_KEY).await?;
+    if let Some(redirect) = reject_if_not_in(&state, &user_info, PermissionsGroup::EventsTeam).await
+    {
+        return Ok(redirect);
+    }
+
+    sqlx::query(sql::DELETE_EVENT_ENROUTE_SECTOR_SPLIT)
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+
+    let cid = user_info
+        .map(|i| i.cid.to_string())
+        .unwrap_or("UNKNOWN_CID".to_string());
+    record_log(
+        format!(
+            "{} removed enroute sector split assignment from event {id}",
+            cid
+        ),
+        &state.db,
+        true,
+    )
+    .await?;
+
+    flashed_messages::push_flashed_message(
+        session,
+        flashed_messages::MessageLevel::Info,
+        "Removed enroute sector split assignment",
+    )
+    .await?;
+    Ok(Redirect::to(&format!("/events/{id}")))
+}
+
 /// This file's routes and templates.
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -965,4 +1064,12 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/events/{id}/set_position", post(post_set_position))
         .route("/events/{id}/no_show", post(post_no_show))
+        .route(
+            "/events/{id}/assign_enroute_sector_split",
+            post(post_assign_event_enroute_sector_split),
+        )
+        .route(
+            "/events/{id}/remove_enroute_sector_split",
+            post(post_remove_event_enroute_sector_split),
+        )
 }
