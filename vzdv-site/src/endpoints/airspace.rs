@@ -558,9 +558,8 @@ async fn page_splits(
         is_user_member_of(&state, &user_info, PermissionsGroup::EventsTeam).await;
     let splits = load_splits_from_db(&state.db, &state.sectors_config).await?;
     let split_names: Vec<String> = splits.splits.keys().cloned().collect();
-    let requested_split = query.split.clone();
     let event_split = active_event_split_name(&state.db).await?;
-    let current_split = match requested_split.clone() {
+    let current_split = match query.split {
         Some(s) => s,
         None => {
             if let Some(event_split) = event_split.clone() {
