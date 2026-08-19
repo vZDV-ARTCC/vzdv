@@ -234,6 +234,13 @@ pub struct EnrouteSectorSplit {
     pub config: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, FromRow, Clone)]
+pub struct ControllerActivityManualAdjustment {
+    pub cid: u32,
+    pub month: String,
+    pub seconds: i32,
+}
+
 /// Statements to create tables. Only ran when the DB file does not exist,
 /// so no migration or "IF NOT EXISTS" conditions need to be added.
 pub const CREATE_TABLES: &str = r#"
@@ -466,6 +473,12 @@ CREATE TABLE event_enroute_sector_split_assignment (
   
   FOREIGN KEY (event_id) REFERENCES event(id),
   FOREIGN KEY (split_id) REFERENCES enroute_sector_split(id)
+) STRICT;
+
+CREATE TABLE controller_activity_manual_adjustment (
+    cid INTEGER NOT NULL,
+    month TEXT NOT NULL,
+    seconds INTEGER NOT NULL
 ) STRICT;
 "#;
 
@@ -726,3 +739,6 @@ WHERE
 ";
 pub const DELETE_EVENT_ENROUTE_SECTOR_SPLIT: &str =
     "DELETE FROM event_enroute_sector_split_assignment WHERE event_id = $1";
+
+pub const GET_CONTROLLER_ACTIVITY_MANUAL_ADJUSTMENT: &str =
+    "SELECT * FROM controller_activity_manual_adjustment WHERE cid = $1";

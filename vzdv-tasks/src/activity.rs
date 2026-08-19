@@ -11,7 +11,7 @@ use vatsim_utils::rest_api;
 use vzdv::{
     config::Config,
     position_in_facility_airspace,
-    sql::{self},
+    sql::{self, ControllerActivityManualAdjustment},
 };
 
 /// Update the activity for a single controller, looking back several
@@ -52,6 +52,15 @@ async fn true_up_single_activity(
 
         let month = session.start[0..7].to_string();
         let seconds = session.minutes_on_callsign.parse::<f32>().unwrap() * 60.0;
+
+        if seconds >= 86400.0 {
+            // Bug in VATSIM api setting controllers' start timestamp to multiple weeks out
+            // Simply unreasonable unless someone is doing a 24-hour run lol
+            // But we have the manual adjustments to use to correct these
+            warn!("Controller {cid} has {seconds} seconds in month {month}; skipping");
+            continue;
+        }
+
         seconds_map
             .entry(month)
             .and_modify(|acc| *acc += seconds)
@@ -60,6 +69,22 @@ async fn true_up_single_activity(
 
     // transaction for these queries
     let mut tx = db.begin().await?;
+
+    // See if we made any manual adjustments to a controller's time due to the api bug
+    let manual_adjustments: Vec<ControllerActivityManualAdjustment> =
+        sqlx::query_as(sql::GET_CONTROLLER_ACTIVITY_MANUAL_ADJUSTMENT)
+            .bind(cid)
+            .fetch_all(&mut *tx)
+            .await
+            .with_context(|| format!("Getting manual adjustment for CID {cid}"))?;
+
+    for row in manual_adjustments {
+        seconds_map
+            .entry(row.month)
+            .and_modify(|acc| *acc += row.seconds as f32)
+            .or_insert(row.seconds as f32);
+    }
+
     // clear the controller's existing records in prep for replacement
     sqlx::query(sql::DELETE_ACTIVITY_FOR_CID)
         .bind(cid)
