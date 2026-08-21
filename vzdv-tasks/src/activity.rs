@@ -4,7 +4,10 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Months, Utc};
 use log::{debug, error, warn};
 use sqlx::{Pool, Row, Sqlite};
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 use tokio::time;
 use vatsim_utils::errors::VatsimUtilError;
 use vatsim_utils::rest_api;
@@ -78,7 +81,22 @@ async fn true_up_single_activity(
             .await
             .with_context(|| format!("Getting manual adjustment for CID {cid}"))?;
 
+    let five_mo_ago_time =
+        chrono::DateTime::parse_from_rfc3339(format!("{}-01T00:00:00Z", five_months_ago).as_str())?;
+    let mut months = HashSet::new();
+    for i in 0..5 {
+        let month_delta = Months::new(i);
+        let month = five_mo_ago_time
+            .checked_add_months(month_delta)
+            .context("Unable to add month_delta to five_mo_ago datetime")?;
+        let month_stub = month.to_string()[..7].to_string();
+        months.insert(month_stub);
+    }
+
     for row in manual_adjustments {
+        if !months.contains(&row.month) {
+            continue;
+        }
         seconds_map
             .entry(row.month)
             .and_modify(|acc| *acc += row.seconds as f32)
@@ -149,16 +167,39 @@ async fn update_single_activity(
         if !position_in_facility_airspace(config, &session.callsign) {
             continue;
         }
-        counter += session.minutes_on_callsign.parse::<f32>().unwrap() * 60.0;
+
+        let minutes_on_callsign = session.minutes_on_callsign.parse::<f32>().unwrap();
+        if minutes_on_callsign >= 1440.0 {
+            // VATSIM API Bug, ignore this and let the manual adjustment apply
+            continue;
+        }
+
+        counter += minutes_on_callsign * 60.0;
     }
+
+    let year_and_month = &start_of_month[..7];
+
+    let adjustment_seconds = {
+        let adjustments: Vec<sql::ControllerActivityManualAdjustment> =
+            sqlx::query_as(sql::GET_CONTROLLER_ACTIVITY_MANUAL_ADJUSTMENT_FOR_MONTH)
+                .bind(cid as u32)
+                .bind(year_and_month)
+                .fetch_all(db)
+                .await?;
+        adjustments
+            .into_iter()
+            .map(|adj| adj.seconds as f32)
+            .sum::<f32>()
+    };
+
     let logon_time = DateTime::parse_from_rfc3339(logon_time)?.timestamp();
     let online_seconds = Utc::now().timestamp() - logon_time;
-    let minutes = ((counter + online_seconds as f32) / 60.0).round() as u32;
+    let minutes = ((counter + adjustment_seconds + online_seconds as f32) / 60.0).round() as u32;
 
     // update the controller's time for this month (if able)
     let result = sqlx::query(sql::UPDATE_ACTIVITY)
         .bind(cid as u32)
-        .bind(start_of_month[0..7].to_string())
+        .bind(year_and_month)
         .bind(minutes)
         .execute(db)
         .await
@@ -168,7 +209,7 @@ async fn update_single_activity(
         // so no rows were updated. Insert a new row.
         sqlx::query(sql::INSERT_INTO_ACTIVITY)
             .bind(cid as u32)
-            .bind(start_of_month[0..7].to_string())
+            .bind(year_and_month)
             .bind(minutes)
             .execute(db)
             .await
