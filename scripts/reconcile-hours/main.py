@@ -26,15 +26,15 @@ def main(args):
     data = resp.json()
 
     total_mins = 0.0
-    results = data["results"]
-    for result in results:
-        conn_id = result["connection_id"]
-        minutes_on_callsign = float(result["minutes_on_callsign"])
+    sessions = data["results"]
+    for session in sessions:
+        conn_id = session["connection_id"]
+        minutes_on_callsign = float(session["minutes_on_callsign"])
         # start = result["start"]
         # end = result["end"]
         # total_minutes_on_callsign = result["total_minutes_on_callsign"]
 
-        if minutes_on_callsign > 1440:
+        if minutes_on_callsign >= 1440:
             print(f"Erroneous minutes_on_callsign for connection {conn_id}: {minutes_on_callsign}")
             continue
 

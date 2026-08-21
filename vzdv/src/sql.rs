@@ -742,3 +742,5 @@ pub const DELETE_EVENT_ENROUTE_SECTOR_SPLIT: &str =
 
 pub const GET_CONTROLLER_ACTIVITY_MANUAL_ADJUSTMENT: &str =
     "SELECT * FROM controller_activity_manual_adjustment WHERE cid = $1";
+pub const GET_CONTROLLER_ACTIVITY_MANUAL_ADJUSTMENT_FOR_MONTH: &str =
+    "SELECT * FROM controller_activity_manual_adjustment WHERE cid = $1 AND month = $2";
