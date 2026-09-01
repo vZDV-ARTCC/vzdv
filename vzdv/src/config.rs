@@ -18,6 +18,7 @@ pub struct Config {
     pub stats: ConfigStats,
     pub discord: ConfigDiscord,
     pub email: ConfigEmail,
+    pub airspace_maps: ConfigAirspaceMaps,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -156,6 +157,11 @@ pub struct ConfigEmail {
     pub password: String,
     pub from: String,
     pub reply_to: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ConfigAirspaceMaps {
+    pub carto_key: String,
 }
 
 impl Config {
