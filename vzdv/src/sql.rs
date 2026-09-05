@@ -227,6 +227,20 @@ pub struct AuxiliaryTrainingData {
     pub notes: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize, FromRow, Clone)]
+pub struct EnrouteSectorSplit {
+    pub id: u32,
+    pub name: String,
+    pub config: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, FromRow, Clone)]
+pub struct ControllerActivityManualAdjustment {
+    pub cid: u32,
+    pub month: String,
+    pub seconds: i32,
+}
+
 /// Statements to create tables. Only ran when the DB file does not exist,
 /// so no migration or "IF NOT EXISTS" conditions need to be added.
 pub const CREATE_TABLES: &str = r#"
@@ -444,6 +458,27 @@ CREATE TABLE auxiliary_training_data (
   notes TEXT,
 
   FOREIGN KEY (cid) REFERENCES controller(cid)
+) STRICT;
+
+CREATE TABLE enroute_sector_split (
+  id INTEGER PRIMARY KEY NOT NULL,
+  name text UNIQUE NOT NULL,
+  config text NOT NULL
+) STRICT;
+
+CREATE TABLE event_enroute_sector_split_assignment (
+  id INTEGER PRIMARY KEY NOT NULL,
+  event_id INTEGER UNIQUE NOT NULL,
+  split_id INTEGER NOT NULL,
+  
+  FOREIGN KEY (event_id) REFERENCES event(id),
+  FOREIGN KEY (split_id) REFERENCES enroute_sector_split(id)
+) STRICT;
+
+CREATE TABLE controller_activity_manual_adjustment (
+    cid INTEGER NOT NULL,
+    month TEXT NOT NULL,
+    seconds INTEGER NOT NULL
 ) STRICT;
 "#;
 
@@ -669,3 +704,43 @@ pub const DELETE_ATIS_ENTRY: &str = "DELETE FROM atis WHERE id=$1";
 pub const GET_AUX_TRAINING_DATA_FOR: &str = "SELECT * FROM auxiliary_training_data WHERE cid=$1";
 pub const ADD_AUX_TRAINING_DATA: &str =
     "INSERT INTO auxiliary_training_data VALUES (NULL, $1, $2, $3, $4, $5);";
+
+pub const GET_ALL_ENROUTE_SECTOR_SPLITS: &str = "SELECT * FROM enroute_sector_split";
+pub const GET_EVENT_ENROUTE_SECTOR_SPLIT: &str = "
+SELECT enroute_sector_split.id, enroute_sector_split.name, enroute_sector_split.config FROM enroute_sector_split
+JOIN event_enroute_sector_split_assignment ON enroute_sector_split.id = event_enroute_sector_split_assignment.split_id
+WHERE event_enroute_sector_split_assignment.event_id = $1";
+pub const GET_ACTIVE_EVENT_ENROUTE_SPLIT: &str = "
+SELECT enroute_sector_split.name FROM enroute_sector_split
+JOIN event_enroute_sector_split_assignment ON enroute_sector_split.id = event_enroute_sector_split_assignment.split_id
+JOIN event ON event.id = event_enroute_sector_split_assignment.event_id
+WHERE event.start <= $1 AND event.end >= $2
+ORDER BY event.start
+LIMIT 1";
+pub const UPSERT_ENROUTE_SECTOR_SPLIT: &str = "
+INSERT INTO enroute_sector_split
+    (id, name, config)
+VALUES
+    (NULL, $1, $2)
+ON CONFLICT(name) DO UPDATE SET
+    config=$2
+WHERE
+    name=$1
+";
+pub const UPSERT_EVENT_ENROUTE_SECTOR_SPLIT: &str = "
+INSERT INTO event_enroute_sector_split_assignment
+    (id, event_id, split_id)
+VALUES
+    (NULL, $1, $2)
+ON CONFLICT(event_id) DO UPDATE SET
+    split_id=$2
+WHERE
+    event_id=$1
+";
+pub const DELETE_EVENT_ENROUTE_SECTOR_SPLIT: &str =
+    "DELETE FROM event_enroute_sector_split_assignment WHERE event_id = $1";
+
+pub const GET_CONTROLLER_ACTIVITY_MANUAL_ADJUSTMENT: &str =
+    "SELECT * FROM controller_activity_manual_adjustment WHERE cid = $1";
+pub const GET_CONTROLLER_ACTIVITY_MANUAL_ADJUSTMENT_FOR_MONTH: &str =
+    "SELECT * FROM controller_activity_manual_adjustment WHERE cid = $1 AND month = $2";

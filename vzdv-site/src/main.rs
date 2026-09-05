@@ -19,7 +19,7 @@ use tower::ServiceBuilder;
 use tower_http::timeout::TimeoutLayer;
 use tower_sessions::{Expiry, SessionManagerLayer};
 use tower_sessions_sqlx_store::SqliteStore;
-use vzdv::{ControllerRating, general_setup};
+use vzdv::{ControllerRating, general_setup, splits::SectorsConfig};
 
 mod discord;
 mod endpoints;
@@ -124,6 +124,7 @@ fn load_templates() -> Result<Environment<'static>, AppError> {
             .timestamp()
             .to_string()
     });
+    env.add_filter("urlencode", |s: String| urlencoding::encode(&s).to_string());
 
     Ok(env)
 }
@@ -213,9 +214,25 @@ async fn main() {
     };
     debug!("Loaded");
 
+    debug!("Loading sector configuration");
+    let sectors_config = match fs::read_to_string("splits.json") {
+        Ok(text) => match serde_json::from_str::<SectorsConfig>(&text) {
+            Ok(s) => s,
+            Err(e) => {
+                error!("Could not parse splits.json: {e}");
+                return;
+            }
+        },
+        Err(e) => {
+            error!("Could not read splits.json: {e}");
+            return;
+        }
+    };
+
     debug!("Setting up app");
     let app_state = Arc::new(AppState {
         config,
+        sectors_config,
         ids_config,
         db: db.clone(),
         templates,
