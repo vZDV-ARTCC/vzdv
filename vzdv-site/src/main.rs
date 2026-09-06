@@ -62,6 +62,13 @@ struct Cli {
 /// macro and supply to the minijinja environment.
 fn load_templates() -> Result<Environment<'static>, AppError> {
     let mut env = Environment::new();
+    env.set_auto_escape_callback(|name| {
+        if name.starts_with("ids/") {
+            minijinja::AutoEscape::Html
+        } else {
+            minijinja::default_auto_escape_callback(name)
+        }
+    });
 
     #[cfg(feature = "bundled")]
     {
@@ -151,7 +158,10 @@ fn load_router(
                 .layer(TimeoutLayer::new(Duration::from_secs(30)))
                 .layer(axum_middleware::from_fn(middleware::logging))
                 .layer(sessions_layer)
-                .layer(axum_middleware::from_fn(middleware::extend_session)),
+                .layer(axum_middleware::from_fn_with_state(
+                    app_state.clone(),
+                    middleware::extend_session,
+                )),
         )
         .fallback(endpoints::page_404)
 }
@@ -234,11 +244,13 @@ async fn main() {
         config,
         sectors_config,
         ids_config,
+        ids_cache: endpoints::ids::IdsCache::default(),
         db: db.clone(),
         templates,
         cache: Cache::new(30),
     });
     let router = load_router(session_layer, &app_state);
+    let ids_updates = tokio::spawn(endpoints::ids::refresh_snapshots(app_state.clone()));
     let app = router.with_state(app_state);
     let assets_dir = Path::new("./assets");
     if !assets_dir.exists() {
@@ -259,5 +271,7 @@ async fn main() {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("Could not serve the app");
+    ids_updates.abort();
+    let _ = ids_updates.await;
     db.close().await;
 }

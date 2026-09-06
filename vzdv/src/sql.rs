@@ -517,6 +517,7 @@ pub const INSERT_USER_SIMPLE: &str = "INSERT INTO controller
 VALUES
     (NULL, $1, $2, $3, $4, $5, FALSE)";
 
+pub const GET_CONTROLLER_ROSTER_STATUS: &str = "SELECT is_on_roster FROM controller WHERE cid=$1";
 pub const GET_ALL_CONTROLLERS: &str = "SELECT * FROM controller";
 pub const GET_ALL_CONTROLLERS_ON_ROSTER: &str = "SELECT * FROM controller WHERE is_on_roster=TRUE";
 pub const GET_ALL_CONTROLLERS_OFF_ROSTER: &str =

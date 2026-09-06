@@ -2,12 +2,47 @@
 
 {% block title %}IDS | {{ super() }}{% endblock %}
 
+{% block extra_head %}
+<style>#ids-page [hidden] { display: none !important; }</style>
+{% endblock %}
+
+{% macro airport_row(row) %}
+<tr data-key="{{ row.icao or '' }}">
+  <td>
+    <strong>
+      <a data-field="airport-link" href="/ids/{{ row.icao }}"{% if not row.is_split %} hidden{% endif %}>{% if row.is_split %}{{ row.icao }}{% endif %}</a>
+      <span data-field="airport-name"{% if row.is_split %} hidden{% endif %}>{% if not row.is_split %}{{ row.icao }}{% endif %}</span>
+    </strong>
+  </td>
+  <td><span data-field="dep_rwys"{% if not row.dep_rwys %} class="text-muted"{% endif %}>{{ row.dep_rwys or "—" }}</span></td>
+  <td><span data-field="arr_rwys"{% if not row.arr_rwys %} class="text-muted"{% endif %}>{{ row.arr_rwys or "—" }}</span></td>
+  <td>
+    <span data-field="error" class="badge text-bg-warning"{% if not row.error %} hidden{% endif %}>{{ row.error or '' }}</span>
+    <span data-field="split"{% if row.error or not row.is_split %} hidden{% endif %}>
+      <span data-field="dep_name" class="text-muted">{% if not row.error and row.is_split %}D-ATIS: {{ row.dep_name or "—" }}{% endif %}</span>
+      <br>
+      <span data-field="arr_name" class="text-muted">{% if not row.error and row.is_split %}A-ATIS: {{ row.arr_name or "—" }}{% endif %}</span>
+    </span>
+    <span data-field="flow_name"{% if row.error or row.is_split %} hidden{% endif %}>{% if not row.error and not row.is_split %}{{ row.flow_name or "—" }}{% endif %}</span>
+  </td>
+  <td><span data-field="atis_info">{{ row.atis_info or '' }}</span></td>
+  <td>
+    <span data-field="conditions" class="{% if row.conditions == 'VFR' %}badge rounded-pill text-bg-success{% elif row.conditions == 'MVFR' %}badge rounded-pill text-bg-info{% elif row.conditions == 'IFR' %}badge rounded-pill text-bg-danger{% elif row.conditions == 'LIFR' %}badge rounded-pill{% else %}text-muted{% endif %}"{% if row.conditions == 'LIFR' %} style="background-color: purple;"{% endif %}>{{ row.conditions if row.conditions in ['VFR', 'MVFR', 'IFR', 'LIFR'] else '—' }}</span>
+  </td>
+  <td><span data-field="wind"{% if not row.wind %} class="text-muted"{% endif %}>{{ row.wind or "—" }}</span></td>
+  <td><span data-field="altimeter"{% if not row.altimeter %} class="text-muted"{% endif %}>{{ row.altimeter or "—" }}</span></td>
+  <td><span data-field="raw_metar" class="{% if row.raw_metar %}font-monospace small{% else %}text-muted{% endif %}">{{ row.raw_metar or "—" }}</span></td>
+</tr>
+{% endmacro %}
+
 {% block body %}
 
 <h2>vZDV IDS</h2>
 
-{% if rows|length > 0 %}
-  <table class="table table-striped table-hover sortable">
+<div id="ids-page" data-mode="overview" data-url="/ids/data" data-warning="{{ warning or '' }}">
+  <p id="ids-status" class="{% if warning %}text-warning{% else %}text-muted{% endif %}">Snapshot updated: <time id="ids-updated" datetime="{{ updated_at }}">{{ updated_at }}</time></p>
+  <p id="ids-warning" class="alert alert-warning" role="status"{% if not warning %} hidden{% endif %}>{% if warning %}{{ warning }} Displaying last available data; it may be stale.{% endif %}</p>
+  <table id="ids-table" class="table table-striped table-hover sortable"{% if not rows %} hidden{% endif %}>
     <thead>
       <tr>
         <th>Airport</th>
@@ -21,84 +56,17 @@
         <th>METAR</th>
       </tr>
     </thead>
-    <tbody>
+    <tbody id="ids-rows">
       {% for row in rows %}
-        <tr>
-          <td>
-            {% if row.is_split %}
-              <strong><a href="/ids/{{ row.icao }}">{{ row.icao }}</a></strong>
-            {% else %}
-              <strong>{{ row.icao }}</strong>
-            {% endif %}
-          </td>
-          <td>
-            {% if row.dep_rwys %}
-              {{ row.dep_rwys }}
-            {% else %}
-              <span class="text-muted">—</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if row.arr_rwys %}
-              {{ row.arr_rwys }}
-            {% else %}
-              <span class="text-muted">—</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if row.error %}
-              <span class="badge text-bg-warning">{{ row.error }}</span>
-            {% elif row.is_split %}
-              <span class="text-muted">D-ATIS: {{ row.dep_name or "—" }}</span>
-              <br>
-              <span class="text-muted">A-ATIS: {{ row.arr_name or "—" }}</span>
-            {% else %}
-              {{ row.flow_name or "—" }}
-            {% endif %}
-          </td>
-          <td>{{ row.atis_info }}</td>
-          <td>
-            {% if row.conditions == 'VFR' %}
-              <span class="badge rounded-pill text-bg-success">{{ row.conditions }}</span>
-            {% elif row.conditions == 'MVFR' %}
-              <span class="badge rounded-pill text-bg-info">{{ row.conditions }}</span>
-            {% elif row.conditions == 'IFR' %}
-              <span class="badge rounded-pill text-bg-danger">{{ row.conditions }}</span>
-            {% elif row.conditions == 'LIFR' %}
-              <span class="badge rounded-pill" style="background-color: purple;">{{ row.conditions }}</span>
-            {% else %}
-              <span class="text-muted">—</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if row.wind %}
-              {{ row.wind }}
-            {% else %}
-              <span class="text-muted">—</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if row.altimeter %}
-              {{ row.altimeter }}
-            {% else %}
-              <span class="text-muted">—</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if row.raw_metar %}
-              <span class="font-monospace small">{{ row.raw_metar }}</span>
-            {% else %}
-              <span class="text-muted">—</span>
-            {% endif %}
-          </td>
-        </tr>
+        {{ airport_row(row) }}
       {% endfor %}
     </tbody>
   </table>
-{% else %}
-  <h4>No IDS airport data configured</h4>
-{% endif %}
+  <h4 id="ids-empty"{% if rows %} hidden{% endif %}>No IDS airport data configured</h4>
+  <template id="ids-row-template">{{ airport_row({}) }}</template>
+</div>
 
 <script src="/static/sorttable.js"></script>
+<script src="/static/ids_page.js" defer></script>
 
 {% endblock %}

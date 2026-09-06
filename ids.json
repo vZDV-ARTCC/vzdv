@@ -766,19 +766,19 @@
         "conds": ["VFR", "MVFR"],
         "speedBounds": {
           "minKts": 0,
-          "maxKts": 9
+          "maxKts": 10
         },
         "useFlow": "VMC"
       },
       {
         "conds": ["VFR", "MVFR"],
         "directionBounds": {
-          "windFrom": 280,
+          "windFrom": 239,
           "clockDir": "cw",
-          "windTo": 20
+          "windTo": 59
         },
         "speedBounds": {
-          "minKts": 10,
+          "minKts": 11,
           "maxKts": 200
         },
         "useFlow": "VMC 15 TAILWIND"
@@ -786,12 +786,12 @@
       {
         "conds": ["VFR", "MVFR"],
         "directionBounds": {
-          "windFrom": 100,
+          "windFrom": 60,
           "clockDir": "cw",
-          "windTo": 200
+          "windTo": 240
         },
         "speedBounds": {
-          "minKts": 10,
+          "minKts": 11,
           "maxKts": 200
         },
         "useFlow": "VMC 33 TAILWIND"
@@ -800,19 +800,19 @@
         "conds": ["IFR", "LIFR"],
         "speedBounds": {
           "minKts": 0,
-          "maxKts": 9
+          "maxKts": 10
         },
         "useFlow": "IMC"
       },
       {
         "conds": ["IFR", "LIFR"],
         "directionBounds": {
-          "windFrom": 280,
+          "windFrom": 239,
           "clockDir": "cw",
-          "windTo": 20
+          "windTo": 59
         },
         "speedBounds": {
-          "minKts": 10,
+          "minKts": 11,
           "maxKts": 200
         },
         "useFlow": "IMC 15 TAILWIND"
@@ -820,12 +820,12 @@
       {
         "conds": ["IFR", "LIFR"],
         "directionBounds": {
-          "windFrom": 100,
+          "windFrom": 60,
           "clockDir": "cw",
-          "windTo": 200
+          "windTo": 240
         },
         "speedBounds": {
-          "minKts": 10,
+          "minKts": 11,
           "maxKts": 200
         },
         "useFlow": "IMC 33 TAILWIND"
@@ -1272,8 +1272,8 @@
       },
       "WEST VMC": {
         "name": "WEST VMC",
-        "depRwys": ["11"],
-        "arrRwys": ["29"]
+        "depRwys": ["29"],
+        "arrRwys": ["11"]
       },
       "EAST IMC": {
         "name": "EAST IMC",
@@ -1282,8 +1282,8 @@
       },
       "WEST IMC": {
         "name": "WEST IMC",
-        "depRwys": ["11"],
-        "arrRwys": ["29"]
+        "depRwys": ["29"],
+        "arrRwys": ["11"]
       }
     },
     "rules": [

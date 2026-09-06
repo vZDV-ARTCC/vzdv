@@ -187,6 +187,7 @@ pub struct AppState {
     pub sectors_config: vzdv::splits::SectorsConfig,
     /// IDS config
     pub ids_config: ConfigIDS,
+    pub ids_cache: crate::endpoints::ids::IdsCache,
     /// Access to the DB
     pub db: SqlitePool,
     /// Loaded templates
@@ -208,12 +209,31 @@ pub struct UserInfo {
     pub last_name: String,
 
     pub is_home: bool,
+    pub on_roster: bool,
 
     pub is_some_staff: bool,
     pub is_named_staff: bool,
     pub is_training_staff: bool,
     pub is_event_staff: bool,
     pub is_admin: bool,
+}
+
+pub async fn refresh_roster_status(
+    db: &SqlitePool,
+    session: &tower_sessions::Session,
+) -> Result<(), AppError> {
+    if let Some(mut user) = session.get::<UserInfo>(SESSION_USER_INFO_KEY).await? {
+        let on_roster = sqlx::query_scalar::<_, bool>(sql::GET_CONTROLLER_ROSTER_STATUS)
+            .bind(user.cid)
+            .fetch_optional(db)
+            .await?
+            .unwrap_or(false);
+        if user.on_roster != on_roster {
+            user.on_roster = on_roster;
+            session.insert(SESSION_USER_INFO_KEY, user).await?;
+        }
+    }
+    Ok(())
 }
 
 /// Returns a response to redirect to the homepage for non-staff users.
@@ -464,7 +484,18 @@ pub async fn get_all_weather(state: &AppState) -> Result<Vec<AirportWeather>> {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_some_tags;
+    use super::{UserInfo, strip_some_tags};
+
+    #[test]
+    fn legacy_user_info_defaults_off_roster() {
+        let value = serde_json::json!({
+            "cid": 123, "first_name": "Test", "last_name": "User",
+            "is_home": true, "is_some_staff": false, "is_named_staff": false,
+            "is_training_staff": false, "is_event_staff": false, "is_admin": false
+        });
+        let user: UserInfo = serde_json::from_value(value).unwrap();
+        assert!(!user.on_roster);
+    }
 
     #[test]
     fn test_strip_some_tags() {

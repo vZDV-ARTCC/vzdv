@@ -64,7 +64,7 @@
                   <li><a class="dropdown-item" href="/airspace/weather">Weather</a></li>
                   <li><a class="dropdown-item" href="/airspace/splits">Sector Splits</a></li>
                   <li><a class="dropdown-item" href="/airspace/staffing_request">Staffing Request</a></li>
-                  {% if user_info %}
+                  {% if user_info and user_info.on_roster %}
                     <li><a class="dropdown-item" href="/ids">IDS</a></li>
                   {% endif %}
                   <li><hr class="dropdown-divider"></li>

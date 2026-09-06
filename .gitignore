@@ -5,3 +5,4 @@ assets
 *.log
 caddy
 CLAUDE.md
+.agents/

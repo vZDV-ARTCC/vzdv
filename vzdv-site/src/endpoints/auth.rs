@@ -70,6 +70,7 @@ async fn page_auth_callback(
             .map(|c| c.home_facility == "ZDV")
             .unwrap_or_default(),
 
+        on_roster: db_user_info.as_ref().is_some_and(|c| c.is_on_roster),
         is_some_staff: !roles.is_empty(),
         is_named_staff: controller_can_see(&db_user_info, vzdv::PermissionsGroup::NamedPosition),
         is_training_staff: controller_can_see(&db_user_info, vzdv::PermissionsGroup::TrainingTeam),

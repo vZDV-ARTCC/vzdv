@@ -1,6 +1,6 @@
 //! App middleware functions.
 
-use crate::shared::{AppState, SESSION_USER_INFO_KEY, UserInfo};
+use crate::shared::{AppError, AppState, SESSION_USER_INFO_KEY, UserInfo, refresh_roster_status};
 use axum::{
     extract::{Request, State},
     middleware::Next,
@@ -101,9 +101,15 @@ pub async fn asset_access(
 /// same amount each time the user visits any page on the site.
 ///
 /// This does touch the DB, which I don't love.
-pub async fn extend_session(session: Session, request: Request, next: Next) -> Response {
+pub async fn extend_session(
+    State(state): State<Arc<AppState>>,
+    session: Session,
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
     session.set_expiry(Some(Expiry::OnInactivity(time::Duration::hours(
         SESSION_INACTIVITY_WINDOW,
     ))));
-    next.run(request).await
+    refresh_roster_status(&state.db, &session).await?;
+    Ok(next.run(request).await)
 }
