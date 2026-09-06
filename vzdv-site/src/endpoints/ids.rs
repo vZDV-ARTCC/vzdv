@@ -24,7 +24,7 @@ use std::{
 use tokio::sync::Mutex;
 use tower_sessions::Session;
 use vzdv::aviation::{AirportWeather, WeatherConditions};
-use vzdv::ids::{AirportProcedure, DepCorridor, sorted_rwy_names};
+use vzdv::ids::{AirportProcedure, DepCorridor, ResolvedFlow, sorted_rwy_names};
 use vzdv::sql::{self, Atis};
 
 /// Receive HTTP POST events from vATIS being ran by facility controllers.
@@ -156,6 +156,7 @@ fn build_ids_row(
     procedure: &AirportProcedure,
     weather: Option<&AirportWeather>,
     atis_list: &[Atis],
+    current_flows: &HashMap<String, ResolvedFlow>,
 ) -> IdsRow {
     let airport_atis: Vec<&Atis> = atis_list.iter().filter(|a| a.facility == icao).collect();
 
@@ -177,11 +178,21 @@ fn build_ids_row(
     let is_split = matches!(procedure, AirportProcedure::Split(_));
 
     let (resolved, error) = match weather {
-        Some(w) => (procedure.determine_flow(w, atis_list).ok(), None),
+        Some(w) => (
+            procedure
+                .determine_flow_with_matches(w, atis_list, current_flows)
+                .ok(),
+            None,
+        ),
         None => {
             if can_determine_without_weather(procedure, atis_list, icao) {
                 let fallback = fallback_weather(icao);
-                (procedure.determine_flow(&fallback, atis_list).ok(), None)
+                (
+                    procedure
+                        .determine_flow_with_matches(&fallback, atis_list, current_flows)
+                        .ok(),
+                    None,
+                )
             } else {
                 (None, Some("No METAR or complete ATIS data".to_string()))
             }
@@ -302,11 +313,19 @@ fn build_airport_detail(
     procedure: &AirportProcedure,
     weather: Option<&AirportWeather>,
     atis: &[Atis],
+    current_flows: &HashMap<String, ResolvedFlow>,
 ) -> AirportDetail {
     let (resolved, error) = match weather {
-        Some(w) => (procedure.determine_flow(w, atis).ok(), None),
+        Some(w) => (
+            procedure
+                .determine_flow_with_matches(w, atis, current_flows)
+                .ok(),
+            None,
+        ),
         None if can_determine_without_weather(procedure, atis, icao) => (
-            procedure.determine_flow(&fallback_weather(icao), atis).ok(),
+            procedure
+                .determine_flow_with_matches(&fallback_weather(icao), atis, current_flows)
+                .ok(),
             None,
         ),
         None => (None, Some("No METAR or complete ATIS data".to_string())),
@@ -366,6 +385,24 @@ struct IdsSnapshot {
     airports: HashMap<String, AirportDetail>,
 }
 
+fn resolve_snapshot_flow(
+    icao: &str,
+    procedure: &AirportProcedure,
+    weather: Option<&AirportWeather>,
+    atis: &[Atis],
+    current_flows: &HashMap<String, ResolvedFlow>,
+) -> Option<ResolvedFlow> {
+    match weather {
+        Some(weather) => procedure
+            .determine_flow_with_matches(weather, atis, current_flows)
+            .ok(),
+        None if can_determine_without_weather(procedure, atis, icao) => procedure
+            .determine_flow_with_matches(&fallback_weather(icao), atis, current_flows)
+            .ok(),
+        None => None,
+    }
+}
+
 fn build_snapshot(
     config: &vzdv::config::ConfigIDS,
     weather: &[AirportWeather],
@@ -373,14 +410,42 @@ fn build_snapshot(
     warning: Option<String>,
 ) -> IdsSnapshot {
     let weather_map = weather_by_icao(weather);
+    let mut current_flows = HashMap::new();
+    for use_try_match in [false, true] {
+        for (icao, procedure) in &config.0 {
+            let has_try_match = matches!(
+                procedure,
+                AirportProcedure::Combined(proc) if proc.try_match.is_some()
+            );
+            if has_try_match != use_try_match {
+                continue;
+            }
+            if let Some(flow) = resolve_snapshot_flow(
+                icao,
+                procedure,
+                weather_map.get(icao).copied(),
+                atis,
+                &current_flows,
+            ) {
+                current_flows.insert(icao.clone(), flow);
+            }
+        }
+    }
+
     let mut rows = Vec::new();
     let mut airports = HashMap::new();
     for (icao, procedure) in &config.0 {
         let weather = weather_map.get(icao).copied();
-        rows.push(build_ids_row(icao, procedure, weather, atis));
+        rows.push(build_ids_row(
+            icao,
+            procedure,
+            weather,
+            atis,
+            &current_flows,
+        ));
         airports.insert(
             icao.clone(),
-            build_airport_detail(icao, procedure, weather, atis),
+            build_airport_detail(icao, procedure, weather, atis, &current_flows),
         );
     }
     rows.sort_by(|a, b| a.icao.cmp(&b.icao));

@@ -656,6 +656,36 @@
   },
   "KAPA": {
     "type": "combined",
+    "tryMatch": {
+      "icao": "KDEN",
+      "matchFlows": {
+        "NORTH CALM": {
+          "vmc": "NORTH VMC",
+          "imc": "NORTH IMC"
+        },
+        "NORTH WEST": {
+          "vmc": "NORTH VMC",
+          "imc": "NORTH IMC"
+        },
+        "NORTH EAST": {
+          "vmc": "NORTH VMC",
+          "imc": "NORTH IMC"
+        },
+        "SOUTH CALM": {
+          "vmc": "SOUTH VMC",
+          "imc": "SOUTH IMC"
+        },
+        "SOUTH WEST": {
+          "vmc": "SOUTH VMC",
+          "imc": "SOUTH IMC"
+        },
+        "SOUTH EAST": {
+          "vmc": "SOUTH VMC",
+          "imc": "SOUTH IMC"
+        }
+      },
+      "matchWhenWindLt": 11
+    },
     "flows": {
       "SOUTH VMC": {
         "name": "SOUTH VMC",
@@ -907,6 +937,44 @@
   },
   "KCFO": {
     "type": "combined",
+    "tryMatch": {
+      "icao": "KDEN",
+      "matchFlows": {
+        "NORTH CALM": {
+          "vmc": "NORTH VMC",
+          "imc": "NORTH IMC"
+        },
+        "NORTH EAST": {
+          "vmc": "NORTH VMC",
+          "imc": "NORTH IMC"
+        },
+        "NORTH WEST": {
+          "vmc": "NORTH VMC",
+          "imc": "NORTH IMC"
+        },
+        "NORTH ALL": {
+          "vmc": "NORTH VMC",
+          "imc": "NORTH IMC"
+        },
+        "SOUTH CALM": {
+          "vmc": "SOUTH VMC",
+          "imc": "SOUTH IMC"
+        },  
+        "SOUTH EAST": {
+          "vmc": "SOUTH VMC",
+          "imc": "SOUTH IMC"
+        },
+        "SOUTH WEST": {
+          "vmc": "SOUTH VMC",
+          "imc": "SOUTH IMC"
+        },
+        "SOUTH ALL": {
+          "vmc": "SOUTH VMC",
+          "imc": "SOUTH IMC"
+        }
+      },
+      "matchWhenWindLt": 10
+    },
     "flows": {
       "SOUTH VMC": {
         "name": "SOUTH VMC",

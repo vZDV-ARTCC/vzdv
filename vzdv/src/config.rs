@@ -204,6 +204,32 @@ impl ConfigIDS {
                             "Rule in {icao} references a flow that is not present in flows field! Rule: {bad_rule:?}"
                         )
                     }
+                    if let Some(try_match) = &proc.try_match {
+                        let Some(reference) = self.0.get(&try_match.icao) else {
+                            bail!(
+                                "tryMatch in {icao} references airport {} that is not configured",
+                                try_match.icao
+                            )
+                        };
+                        if matches!(
+                            reference,
+                            AirportProcedure::Combined(reference) if reference.try_match.is_some()
+                        ) {
+                            bail!(
+                                "tryMatch in {icao} references {}, which also has tryMatch configured",
+                                try_match.icao
+                            )
+                        }
+                        for (reference_flow, flows) in &try_match.match_flows {
+                            for flow in [&flows.vmc, &flows.imc] {
+                                if !proc.flows.contains_key(flow) {
+                                    bail!(
+                                        "tryMatch in {icao} maps {reference_flow} to local flow '{flow}' that is not configured"
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
                 AirportProcedure::Split(proc) => {
                     // Check that every rule references valid dep and arr flows
