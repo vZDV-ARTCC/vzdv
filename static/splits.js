@@ -9,14 +9,29 @@ const PALETTE = [
   "#ff7f0e",
   "#2ca02c",
   "#d62728",
-  "#9467bd",
-  "#8c564b",
   "#e377c2",
   "#bcbd22",
   "#17becf",
+  "#9467bd",
 ];
 
-const map = L.map("split-map").setView([39.0, -105.0], 6);
+const areaAllMap = new Map(
+  Object.entries(config.areas).filter(
+    ([k, _]) => k.startsWith("Area") && k.endsWith("All"),
+  ),
+);
+const sectorAreaColorMap = new Map();
+Array.from(areaAllMap.values()).forEach((sectorIds, i) => {
+  for (const sectorId of sectorIds) {
+    sectorAreaColorMap.set(String(sectorId), PALETTE[i % PALETTE.length]);
+  }
+});
+
+const map = L.map("split-map", {
+  zoomSnap: 0.2,
+  zoomDelta: 0.2,
+  wheelPxPerZoomLevel: 800,
+}).setView([39.0, -105.0], 6);
 L.tileLayer(
   `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=${CARTO_KEY}`,
   {
@@ -35,6 +50,9 @@ let activeColorMap = {};
 let activeSplit = currentSplitName;
 let customSplit = null;
 let showLow = false;
+let showFrequencies = true;
+let showSectorNames = false;
+let truncateOverflow = false;
 const bandsVisible = { high: true, low: false };
 const customModalEl = document.getElementById("customSplitModal");
 let customModal = null;
@@ -118,6 +136,68 @@ function buildLegend(controllers) {
   legend.appendChild(list);
 }
 
+function labelFitsPolygon(marker) {
+  const content = marker.getElement()?.querySelector(".sector-label-content");
+  if (!content) return true;
+  const rect = content.getBoundingClientRect();
+  const mapRect = map.getContainer().getBoundingClientRect();
+  const points = [
+    [rect.left, rect.top],
+    [rect.left + rect.width / 2, rect.top],
+    [rect.right, rect.top],
+    [rect.right, rect.top + rect.height / 2],
+    [rect.right, rect.bottom],
+    [rect.left + rect.width / 2, rect.bottom],
+    [rect.left, rect.bottom],
+    [rect.left, rect.top + rect.height / 2],
+  ];
+  return points.every(([x, y]) =>
+    marker.sectorPolygon._containsPoint(
+      map.containerPointToLayerPoint([x - mapRect.left, y - mapRect.top]),
+    ),
+  );
+}
+
+function updateLabels() {
+  for (const band of ["high", "low"]) {
+    labelLayers[band]?.eachLayer((marker) => {
+      const element = marker.getElement();
+      if (!element) return;
+      const names = element.querySelectorAll(".sector-label-name");
+      const frequencies = element.querySelectorAll(".sector-label-frequency");
+      names.forEach((name) => (name.hidden = !showSectorNames));
+      frequencies.forEach((frequency) => (frequency.hidden = !showFrequencies));
+      if (showFrequencies && truncateOverflow && !labelFitsPolygon(marker)) {
+        frequencies.forEach((frequency) => (frequency.hidden = true));
+      }
+    });
+  }
+}
+
+const labelControl = L.control({ position: "bottomleft" });
+labelControl.onAdd = () => {
+  const container = L.DomUtil.create("div", "split-label-controls");
+  container.innerHTML = `
+    <label title="Show sector names"><input type="checkbox" data-label-toggle="names" ${showSectorNames ? "checked" : ""}>Sector names</label>
+    <label title="Show frequencies"><input type="checkbox" data-label-toggle="frequencies" ${showFrequencies ? "checked" : ""}>Frequencies</label>
+    <label title="Hide extra text that goes outside the boundary of the sector"><input type="checkbox" data-label-toggle="truncate" ${truncateOverflow ? "checked" : ""}>Truncate overflow</label>
+  `;
+  L.DomEvent.disableClickPropagation(container);
+  container.addEventListener("change", (event) => {
+    if (event.target.dataset.labelToggle === "names") {
+      showSectorNames = event.target.checked;
+    } else if (event.target.dataset.labelToggle === "frequencies") {
+      showFrequencies = event.target.checked;
+    } else if (event.target.dataset.labelToggle === "truncate") {
+      truncateOverflow = event.target.checked;
+    }
+    updateLabels();
+  });
+  return container;
+};
+labelControl.addTo(map);
+map.on("zoomend", () => requestAnimationFrame(updateLabels));
+
 function render() {
   const split = getActiveSplit();
   if (!split) return;
@@ -135,7 +215,9 @@ function render() {
     );
     const colorMap = {};
     sortedControllerIds.forEach((id, i) => {
-      colorMap[id] = PALETTE[i % PALETTE.length];
+      colorMap[id] = split.colorCodeByArea
+        ? sectorAreaColorMap.get(id) || PALETTE[i % PALETTE.length]
+        : PALETTE[i % PALETTE.length];
     });
     bandColorMaps[band] = colorMap;
 
@@ -173,6 +255,7 @@ function render() {
         layer.bindTooltip(html);
       },
     });
+    layer.addTo(map);
 
     const labels = L.layerGroup();
     layer.eachLayer((polygonLayer) => {
@@ -180,16 +263,16 @@ function render() {
       const controller = assignments[sectorId];
       if (!controller) return;
       const freq = config.frequencies[controller];
-      const html = `<div style="text-align:center;line-height:1.1">${controller}${freq ? `<br><small>${freq.freq.toFixed(3)}</small>` : ""}</div>`;
-      const center = polygonLayer.getBounds().getCenter();
-      const marker = L.marker(center, {
+      const html = `<div class="sector-label-content" style="text-align:center;line-height:1.1"><div>${controller}</div>${freq ? `<div class="sector-label-name"><small>${freq.name}</small></div><div class="sector-label-frequency"><small>${freq.freq.toFixed(3)}</small></div>` : ""}</div>`;
+      const marker = L.marker(polygonLayer.getCenter(), {
         icon: L.divIcon({
           className: "sector-label",
           html,
-          iconSize: [40, 28],
+          iconSize: [40, 42],
         }),
         interactive: false,
       });
+      marker.sectorPolygon = polygonLayer;
       labels.addLayer(marker);
     });
 
@@ -244,6 +327,7 @@ function syncBandToggle(split) {
   if (visibleLayers.length > 0) {
     map.fitBounds(L.featureGroup(visibleLayers).getBounds().pad(0.05));
   }
+  requestAnimationFrame(updateLabels);
 }
 
 function updateURL() {
@@ -346,6 +430,8 @@ function populateCustomModal(split) {
   const lowRows = document.getElementById("custom-low-rows");
   highRows.innerHTML = "";
   lowRows.innerHTML = "";
+  document.getElementById("custom-color-code-by-area").checked =
+    split?.colorCodeByArea === true;
 
   if (split) {
     for (const [controller, entries] of Object.entries(split.high || {})) {
@@ -385,7 +471,12 @@ function collectCustomSplit() {
     });
     return consolidation;
   };
-  return { high: buildBand("high"), low: buildBand("low") };
+  return {
+    high: buildBand("high"),
+    low: buildBand("low"),
+    colorCodeByArea: document.getElementById("custom-color-code-by-area")
+      .checked,
+  };
 }
 
 document.getElementById("split-select").addEventListener("change", (e) => {
