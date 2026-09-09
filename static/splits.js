@@ -180,7 +180,7 @@ labelControl.onAdd = () => {
   container.innerHTML = `
     <label title="Show sector names"><input type="checkbox" data-label-toggle="names" ${showSectorNames ? "checked" : ""}>Sector names</label>
     <label title="Show frequencies"><input type="checkbox" data-label-toggle="frequencies" ${showFrequencies ? "checked" : ""}>Frequencies</label>
-    <label title="Hide extra text that goes outside the boundary of the sector"><input type="checkbox" data-label-toggle="truncate" ${truncateOverflow ? "checked" : ""}>Truncate overflow</label>
+    <label title="Hide extra text that goes outside the boundary of the sector"><input type="checkbox" data-label-toggle="truncate" ${truncateOverflow ? "checked" : ""}>Hide Extra Text</label>
   `;
   L.DomEvent.disableClickPropagation(container);
   container.addEventListener("change", (event) => {
