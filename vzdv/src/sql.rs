@@ -294,6 +294,8 @@ CREATE TABLE activity (
     FOREIGN KEY (cid) REFERENCES controller(cid)
 ) STRICT;
 
+CREATE UNIQUE INDEX activity_cid_month ON activity(cid, month);
+
 CREATE TABLE resource (
     id INTEGER PRIMARY KEY NOT NULL,
     category TEXT NOT NULL,
@@ -558,6 +560,8 @@ VALUES
     (NULL, $1, $2, $3)
 ";
 pub const UPDATE_ACTIVITY: &str = "UPDATE activity SET minutes=$3 WHERE cid=$1 AND month=$2";
+pub const GET_ACTIVITY_MINUTES_FOR_CID_MONTH: &str =
+    "SELECT minutes FROM activity WHERE cid=$1 AND month=$2";
 pub const SELECT_ACTIVITY_JUST_MONTHS: &str = "SELECT DISTINCT month FROM activity";
 
 pub const INSERT_FEEDBACK: &str = "
