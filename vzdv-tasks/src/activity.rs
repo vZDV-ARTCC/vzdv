@@ -97,7 +97,8 @@ async fn notify_bugged_session(
                 )
             }))
             .send()
-            .await?;
+            .await?
+            .error_for_status()?;
     }
     sqlx::query(sql::UPSERT_KVS_ENTRY)
         .bind(&key)
@@ -243,7 +244,7 @@ pub async fn true_up_all_controllers_activity(config: &Config, db: &Pool<Sqlite>
     let five_months_ago = chrono::Utc::now()
         .checked_sub_months(Months::new(5))
         .unwrap()
-        .format("%Y-%m-%d")
+        .format("%Y-%m-01")
         .to_string();
     let online_seconds = match online_controller_seconds(config).await {
         Ok(map) => map,
@@ -374,28 +375,36 @@ const OFFLINE_RECONCILE_MAX_TRIES: u8 = 3;
 /// update for controllers shortly after they drop offline to recover it.
 #[derive(Default)]
 pub struct RecentlyOffline {
-    /// In-facility, on-roster CIDs seen online on the last tick.
-    previous: HashSet<u64>,
-    /// CID -> (ticks to wait before reconciling, failed reconcile attempts).
-    pending: HashMap<u64, (u8, u8)>,
+    /// In-facility, on-roster CIDs seen online on the last tick, and the
+    /// month that tick ran in (for reconciles that cross a month boundary).
+    previous: (HashSet<u64>, String),
+    /// CID -> (month they were last online in, ticks to wait, failed tries).
+    pending: HashMap<u64, (String, u8, u8)>,
 }
 
 impl RecentlyOffline {
-    /// Advance the state to a new tick, returning CIDs due for a reconcile.
-    fn tick(&mut self, online: &HashSet<u64>) -> Vec<u64> {
+    /// Advance the state to a new tick, returning `(cid, online_month)` pairs
+    /// due for a reconcile attempt.
+    fn tick(&mut self, online: &HashSet<u64>, month: &str) -> Vec<(u64, String)> {
         // a controller who's back online is handled by the normal path
         self.pending.retain(|cid, _| !online.contains(cid));
         // newly-dropped controllers wait before reconciling so the API can
         // finalize their just-ended session
-        for cid in self.previous.difference(online) {
-            self.pending.insert(*cid, (OFFLINE_RECONCILE_WAIT_TICKS, 0));
+        let (previous, previous_month) = &self.previous;
+        for cid in previous {
+            if !online.contains(cid) {
+                self.pending.insert(
+                    *cid,
+                    (previous_month.clone(), OFFLINE_RECONCILE_WAIT_TICKS, 0),
+                );
+            }
         }
-        self.previous.clone_from(online);
+        self.previous = (online.clone(), month.to_string());
 
         let mut due = Vec::new();
-        for (cid, (wait, _)) in &mut self.pending {
+        for (cid, (month, wait, _)) in &mut self.pending {
             if *wait == 0 {
-                due.push(*cid);
+                due.push((*cid, month.clone()));
             } else {
                 *wait -= 1;
             }
@@ -403,11 +412,12 @@ impl RecentlyOffline {
         due
     }
 
-    /// Record a reconcile attempt that would have regressed the stored
-    /// minutes; retry next tick unless the attempt cap is reached.
+    /// Record a reconcile attempt that should be retried on a later tick
+    /// (the write would have regressed stored minutes, or the request
+    /// failed), unless the attempt cap is reached.
     fn mark_regressed(&mut self, cid: u64) {
         match self.pending.get_mut(&cid) {
-            Some((wait, tries)) if *tries + 1 < OFFLINE_RECONCILE_MAX_TRIES => {
+            Some((_, wait, tries)) if *tries + 1 < OFFLINE_RECONCILE_MAX_TRIES => {
                 *tries += 1;
                 *wait = 1;
             }
@@ -466,16 +476,16 @@ pub async fn update_online_controller_activity(
         time::sleep(Duration::from_secs(8)).await;
     }
 
-    for cid in recent.lock().await.tick(&online_cids) {
-        debug!("Reconciling recently-offline CID {cid}");
-        match update_single_activity(config, db, &start_of_month, cid, None).await {
+    for (cid, month) in recent.lock().await.tick(&online_cids, &start_of_month[..7]) {
+        debug!("Reconciling recently-offline CID {cid} for {month}");
+        match update_single_activity(config, db, &format!("{month}-01"), cid, None).await {
             Ok(false) => recent.lock().await.mark_regressed(cid),
             Ok(true) => {
                 recent.lock().await.pending.remove(&cid);
             }
             Err(e) => {
                 error!("Error reconciling offline CID {cid}: {e}");
-                recent.lock().await.pending.remove(&cid);
+                recent.lock().await.mark_regressed(cid);
             }
         }
         // wait 8 seconds to adhere to the VATSIM API rate limits
@@ -483,4 +493,203 @@ pub async fn update_online_controller_activity(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn test_db() -> Pool<Sqlite> {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE kvs (key TEXT NOT NULL UNIQUE, value TEXT NOT NULL) STRICT")
+            .execute(&db)
+            .await
+            .unwrap();
+        db
+    }
+
+    #[test]
+    fn test_clamped_online_seconds_normal() {
+        let now = Utc.with_ymd_and_hms(2026, 9, 15, 12, 0, 0).unwrap();
+        let month_start = Utc
+            .with_ymd_and_hms(2026, 9, 1, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+        let seconds = clamped_online_seconds("2026-09-15T10:00:00Z", &now, month_start).unwrap();
+        assert_eq!(seconds, 7_200);
+    }
+
+    #[test]
+    fn test_clamped_online_seconds_caps_at_24h() {
+        let now = Utc.with_ymd_and_hms(2026, 9, 15, 12, 0, 0).unwrap();
+        let month_start = Utc
+            .with_ymd_and_hms(2026, 9, 1, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+        // logged on 5 days ago — more than the 24-hour cap
+        let seconds = clamped_online_seconds("2026-09-10T10:00:00Z", &now, month_start).unwrap();
+        assert_eq!(seconds, 86_400);
+    }
+
+    #[test]
+    fn test_clamped_online_seconds_bounded_by_month_start() {
+        let now = Utc.with_ymd_and_hms(2026, 9, 1, 2, 0, 0).unwrap();
+        let month_start = Utc
+            .with_ymd_and_hms(2026, 9, 1, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+        // logged on last month — only this month's share counts
+        let seconds = clamped_online_seconds("2026-08-31T20:00:00Z", &now, month_start).unwrap();
+        assert_eq!(seconds, now.timestamp() - month_start);
+    }
+
+    #[test]
+    fn test_clamped_online_seconds_future_logon_is_zero() {
+        let now = Utc.with_ymd_and_hms(2026, 9, 15, 12, 0, 0).unwrap();
+        let month_start = Utc
+            .with_ymd_and_hms(2026, 9, 1, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+        let seconds = clamped_online_seconds("2026-09-16T00:00:00Z", &now, month_start).unwrap();
+        assert_eq!(seconds, 0);
+    }
+
+    #[test]
+    fn test_clamped_online_seconds_bad_timestamp() {
+        let now = Utc.with_ymd_and_hms(2026, 9, 15, 12, 0, 0).unwrap();
+        assert!(clamped_online_seconds("not a timestamp", &now, 0).is_err());
+    }
+
+    #[test]
+    fn test_recently_offline_reconciles_after_wait() {
+        let mut recent = RecentlyOffline::default();
+        let mut online = HashSet::new();
+        online.insert(123_u64);
+
+        // seen online, then drops offline
+        assert!(recent.tick(&online, "2026-09").is_empty());
+        online.clear();
+        assert!(recent.tick(&online, "2026-09").is_empty());
+        assert!(recent.tick(&online, "2026-09").is_empty());
+
+        let due = recent.tick(&online, "2026-09");
+        assert_eq!(due, vec![(123, "2026-09".to_string())]);
+        // a successful reconcile removes the entry
+        recent.pending.remove(&123);
+        assert!(recent.pending.is_empty());
+    }
+
+    #[test]
+    fn test_recently_offline_keeps_online_month_across_boundary() {
+        let mut recent = RecentlyOffline::default();
+        let mut online = HashSet::new();
+        online.insert(123_u64);
+
+        // online during the September tick, gone by the October tick
+        recent.tick(&online, "2026-09");
+        online.clear();
+        recent.tick(&online, "2026-10");
+        recent.tick(&online, "2026-10");
+
+        // the reconcile is for September, the month they were last online
+        let due = recent.tick(&online, "2026-10");
+        assert_eq!(due, vec![(123, "2026-09".to_string())]);
+    }
+
+    #[test]
+    fn test_recently_offline_reconnect_cancels_pending() {
+        let mut recent = RecentlyOffline::default();
+        let mut online = HashSet::new();
+        online.insert(123_u64);
+
+        recent.tick(&online, "2026-09");
+        online.clear();
+        recent.tick(&online, "2026-09");
+        // reconnect before the wait elapses
+        online.insert(123_u64);
+        recent.tick(&online, "2026-09");
+
+        assert!(recent.pending.is_empty());
+        online.clear();
+        assert!(recent.tick(&online, "2026-09").is_empty());
+    }
+
+    #[test]
+    fn test_recently_offline_regress_retries_then_gives_up() {
+        let mut recent = RecentlyOffline::default();
+        let mut online = HashSet::new();
+        online.insert(123_u64);
+        recent.tick(&online, "2026-09");
+        online.clear();
+        recent.tick(&online, "2026-09");
+        recent.tick(&online, "2026-09");
+
+        // first attempt regresses (session not yet finalized); retry is queued
+        assert!(!recent.tick(&online, "2026-09").is_empty());
+        recent.mark_regressed(123);
+        assert!(recent.tick(&online, "2026-09").is_empty());
+        assert!(!recent.tick(&online, "2026-09").is_empty());
+        recent.mark_regressed(123);
+        assert!(recent.tick(&online, "2026-09").is_empty());
+        assert!(!recent.tick(&online, "2026-09").is_empty());
+
+        // third regress exhausts the attempt cap
+        recent.mark_regressed(123);
+        assert!(recent.pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_notify_bugged_session_marks_once() {
+        let db = test_db().await;
+        let config = Config::default(); // empty webhook URL skips the POST
+        let session = AtcSessionEntry {
+            connection_id: 42,
+            callsign: "DEN_CTR".to_string(),
+            start: "2026-08-04T23:13:03".to_string(),
+            minutes_on_callsign: "19085.266667".to_string(),
+            ..Default::default()
+        };
+
+        notify_bugged_session(&config, &db, 123, &session)
+            .await
+            .unwrap();
+        notify_bugged_session(&config, &db, 123, &session)
+            .await
+            .unwrap();
+
+        // still exactly one row — the second call early-returns
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM kvs")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_notify_bugged_session_send_failure_not_marked() {
+        let db = test_db().await;
+        let mut config = Config::default();
+        // unroutable endpoint makes the request fail
+        config.discord.webhooks.errors = "http://127.0.0.1:1/".to_string();
+        let session = AtcSessionEntry::default();
+
+        assert!(
+            notify_bugged_session(&config, &db, 123, &session)
+                .await
+                .is_err()
+        );
+
+        // no marker written, so the next true-up will retry
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM kvs")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
 }

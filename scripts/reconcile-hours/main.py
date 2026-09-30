@@ -106,7 +106,13 @@ def fetch_online_seconds(target_cids, prefixes, suffixes):
         logon = datetime.fromisoformat(
             re.sub(r"\.\d+", "", logon).replace("Z", "+00:00")
         )
-        online[cid] = online.get(cid, 0.0) + (now - logon).total_seconds()
+        # mirror clamped_online_seconds in vzdv-tasks/src/activity.rs: only
+        # this month's time, at most 24h, never negative
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        secs = min(
+            (now - logon).total_seconds(), (now - month_start).total_seconds()
+        )
+        online[cid] = online.get(cid, 0.0) + min(max(secs, 0.0), 86400.0)
     return online
 
 
@@ -240,7 +246,9 @@ def main():
         if args.cid is None:
             print(f"[{i + 1}/{len(targets)}] fetching sessions for {cid}", file=sys.stderr)
         try:
-            sessions = fetch_sessions(cid, args.start_date)
+            # compare whole months like the stored rows do: a mid-month API
+            # start would produce bogus negative deltas for the first month
+            sessions = fetch_sessions(cid, f"{start_month}-01")
             sessions = [
                 s
                 for s in sessions
@@ -264,7 +272,7 @@ def main():
     # Pretty-printed SQL to stdout; everything above went to stderr.
     print("-- vZDV controller activity reconciliation")
     print(f"-- generated {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}")
-    print(f"-- sessions since {args.start_date}; db {args.db}")
+    print(f"-- sessions since {start_month}-01; db {args.db}")
     print(
         "-- delta = computed VATSIM seconds - (stored minutes*60 - existing adjustment seconds)"
     )
