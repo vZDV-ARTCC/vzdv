@@ -274,18 +274,29 @@ pub async fn true_up_all_controllers_activity(config: &Config, db: &Pool<Sqlite>
 /// completed sessions are counted then). Returns whether the activity row
 /// was written: an offline reconcile that would reduce the stored minutes —
 /// meaning the just-ended session likely hasn't finalized in the API yet —
-/// is skipped instead of written.
+/// is skipped instead of written, unless `allow_regress` is set (used when
+/// clearing a transient spot-update row for a month the session doesn't
+/// belong to).
 async fn update_single_activity(
     config: &Config,
     db: &Pool<Sqlite>,
     start_of_month: &str,
     cid: u64,
     logon_time: Option<&str>,
+    allow_regress: bool,
 ) -> Result<bool> {
+    let year_and_month = &start_of_month[..7];
+
     let sessions = rest_api::get_atc_sessions(cid, None, None, Some(start_of_month), None).await?;
     let mut counter = 0.0;
     for session in sessions.results {
         if !position_in_facility_airspace(config, &session.callsign) {
+            continue;
+        }
+        // sessions count toward the month they started in; the API start
+        // param is only a lower bound, so drop later months' sessions when
+        // reconciling a past month
+        if !session.start.starts_with(year_and_month) {
             continue;
         }
 
@@ -297,8 +308,6 @@ async fn update_single_activity(
 
         counter += minutes_on_callsign * 60.0;
     }
-
-    let year_and_month = &start_of_month[..7];
 
     let adjustment_seconds = {
         let adjustments: Vec<sql::ControllerActivityManualAdjustment> =
@@ -322,7 +331,7 @@ async fn update_single_activity(
     };
     let minutes = ((counter + adjustment_seconds + online_seconds as f32) / 60.0).round() as u32;
 
-    if logon_time.is_none() {
+    if logon_time.is_none() && !allow_regress {
         // a session only appears in the API once it ends; if the just-ended
         // session hasn't finalized yet, this recompute would regress the
         // stored minutes, so skip the write and let the caller retry
@@ -375,36 +384,34 @@ const OFFLINE_RECONCILE_MAX_TRIES: u8 = 3;
 /// update for controllers shortly after they drop offline to recover it.
 #[derive(Default)]
 pub struct RecentlyOffline {
-    /// In-facility, on-roster CIDs seen online on the last tick, and the
-    /// month that tick ran in (for reconciles that cross a month boundary).
-    previous: (HashSet<u64>, String),
-    /// CID -> (month they were last online in, ticks to wait, failed tries).
-    pending: HashMap<u64, (String, u8, u8)>,
+    /// In-facility, on-roster CIDs online on the last tick, mapped to the
+    /// months that would need reconciling if they dropped: the month their
+    /// session started in plus the month they were last seen online in.
+    previous: HashMap<u64, HashSet<String>>,
+    /// CID -> (months to reconcile, ticks to wait, failed reconcile tries).
+    pending: HashMap<u64, (HashSet<String>, u8, u8)>,
 }
 
 impl RecentlyOffline {
-    /// Advance the state to a new tick, returning `(cid, online_month)` pairs
-    /// due for a reconcile attempt.
-    fn tick(&mut self, online: &HashSet<u64>, month: &str) -> Vec<(u64, String)> {
+    /// Advance the state to a new tick, returning `(cid, months)` pairs due
+    /// for a reconcile attempt.
+    fn tick(&mut self, online: &HashMap<u64, HashSet<String>>) -> Vec<(u64, HashSet<String>)> {
         // a controller who's back online is handled by the normal path
-        self.pending.retain(|cid, _| !online.contains(cid));
+        self.pending.retain(|cid, _| !online.contains_key(cid));
         // newly-dropped controllers wait before reconciling so the API can
         // finalize their just-ended session
-        let (previous, previous_month) = &self.previous;
-        for cid in previous {
-            if !online.contains(cid) {
-                self.pending.insert(
-                    *cid,
-                    (previous_month.clone(), OFFLINE_RECONCILE_WAIT_TICKS, 0),
-                );
+        for (cid, months) in &self.previous {
+            if !online.contains_key(cid) {
+                self.pending
+                    .insert(*cid, (months.clone(), OFFLINE_RECONCILE_WAIT_TICKS, 0));
             }
         }
-        self.previous = (online.clone(), month.to_string());
+        self.previous.clone_from(online);
 
         let mut due = Vec::new();
-        for (cid, (month, wait, _)) in &mut self.pending {
+        for (cid, (months, wait, _)) in &mut self.pending {
             if *wait == 0 {
-                due.push((*cid, month.clone()));
+                due.push((*cid, months.clone()));
             } else {
                 *wait -= 1;
             }
@@ -449,7 +456,8 @@ pub async fn update_online_controller_activity(
     };
     let start_of_month = chrono::Utc::now().format("%Y-%m-01").to_string();
 
-    let mut online_cids = HashSet::new();
+    let year_and_month = &start_of_month[..7];
+    let mut online: HashMap<u64, HashSet<String>> = HashMap::new();
     for controller in &online_controllers {
         let cid = controller.cid;
         if !on_roster_cids.contains(&cid) {
@@ -459,7 +467,17 @@ pub async fn update_online_controller_activity(
             // ignore controlling in other facilities and observers
             continue;
         }
-        online_cids.insert(cid);
+        // sessions count toward the month they started in, which may differ
+        // from the current month for a connection spanning a boundary
+        let session_month = controller
+            .logon_time
+            .get(..7)
+            .unwrap_or(year_and_month)
+            .to_string();
+        online.insert(
+            cid,
+            HashSet::from([session_month, year_and_month.to_string()]),
+        );
         debug!("Spot-updating activity for {cid}");
         if let Err(e) = update_single_activity(
             config,
@@ -467,6 +485,7 @@ pub async fn update_online_controller_activity(
             &start_of_month,
             cid,
             Some(&controller.logon_time),
+            false,
         )
         .await
         {
@@ -476,20 +495,33 @@ pub async fn update_online_controller_activity(
         time::sleep(Duration::from_secs(8)).await;
     }
 
-    for (cid, month) in recent.lock().await.tick(&online_cids, &start_of_month[..7]) {
-        debug!("Reconciling recently-offline CID {cid} for {month}");
-        match update_single_activity(config, db, &format!("{month}-01"), cid, None).await {
-            Ok(false) => recent.lock().await.mark_regressed(cid),
-            Ok(true) => {
-                recent.lock().await.pending.remove(&cid);
+    for (cid, months) in recent.lock().await.tick(&online) {
+        // earliest month first — that's the session-start month, which keeps
+        // the no-regress guard while its session finalizes; any later month
+        // (a spot-update row from a cross-boundary connection) is rewritten
+        // unconditionally
+        let mut months: Vec<String> = months.into_iter().collect();
+        months.sort_unstable();
+        let mut settled = true;
+        for (i, month) in months.iter().enumerate() {
+            debug!("Reconciling recently-offline CID {cid} for {month}");
+            match update_single_activity(config, db, &format!("{month}-01"), cid, None, i > 0).await
+            {
+                Ok(true) => {}
+                Ok(false) => settled = false,
+                Err(e) => {
+                    error!("Error reconciling offline CID {cid} for {month}: {e}");
+                    settled = false;
+                }
             }
-            Err(e) => {
-                error!("Error reconciling offline CID {cid}: {e}");
-                recent.lock().await.mark_regressed(cid);
-            }
+            // wait 8 seconds to adhere to the VATSIM API rate limits
+            time::sleep(Duration::from_secs(8)).await;
         }
-        // wait 8 seconds to adhere to the VATSIM API rate limits
-        time::sleep(Duration::from_secs(8)).await;
+        if settled {
+            recent.lock().await.pending.remove(&cid);
+        } else {
+            recent.lock().await.mark_regressed(cid);
+        }
     }
 
     Ok(())
@@ -566,20 +598,25 @@ mod tests {
         assert!(clamped_online_seconds("not a timestamp", &now, 0).is_err());
     }
 
+    fn online_set(months: &[&str]) -> HashMap<u64, HashSet<String>> {
+        HashMap::from([(123_u64, months.iter().map(|m| m.to_string()).collect())])
+    }
+
     #[test]
     fn test_recently_offline_reconciles_after_wait() {
         let mut recent = RecentlyOffline::default();
-        let mut online = HashSet::new();
-        online.insert(123_u64);
+        let online = online_set(&["2026-09"]);
 
         // seen online, then drops offline
-        assert!(recent.tick(&online, "2026-09").is_empty());
-        online.clear();
-        assert!(recent.tick(&online, "2026-09").is_empty());
-        assert!(recent.tick(&online, "2026-09").is_empty());
+        assert!(recent.tick(&online).is_empty());
+        let empty = HashMap::new();
+        assert!(recent.tick(&empty).is_empty());
+        assert!(recent.tick(&empty).is_empty());
 
-        let due = recent.tick(&online, "2026-09");
-        assert_eq!(due, vec![(123, "2026-09".to_string())]);
+        let due = recent.tick(&empty);
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].0, 123);
+        assert_eq!(due[0].1, HashSet::from(["2026-09".to_string()]));
         // a successful reconcile removes the entry
         recent.pending.remove(&123);
         assert!(recent.pending.is_empty());
@@ -588,56 +625,72 @@ mod tests {
     #[test]
     fn test_recently_offline_keeps_online_month_across_boundary() {
         let mut recent = RecentlyOffline::default();
-        let mut online = HashSet::new();
-        online.insert(123_u64);
+        let empty = HashMap::new();
 
-        // online during the September tick, gone by the October tick
-        recent.tick(&online, "2026-09");
-        online.clear();
-        recent.tick(&online, "2026-10");
-        recent.tick(&online, "2026-10");
+        // session started in September and they were last online in it; the
+        // drop is detected on an October tick
+        recent.tick(&online_set(&["2026-09"]));
+        recent.tick(&empty);
+        recent.tick(&empty);
 
-        // the reconcile is for September, the month they were last online
-        let due = recent.tick(&online, "2026-10");
-        assert_eq!(due, vec![(123, "2026-09".to_string())]);
+        // only September reconciles — they were never online in October
+        let due = recent.tick(&empty);
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].1, HashSet::from(["2026-09".to_string()]));
+    }
+
+    #[test]
+    fn test_recently_offline_online_through_boundary() {
+        let mut recent = RecentlyOffline::default();
+        let empty = HashMap::new();
+
+        // session started in September; still online during an October tick,
+        // then drops — the transient October spot row also needs reconciling
+        recent.tick(&online_set(&["2026-09"]));
+        recent.tick(&online_set(&["2026-09", "2026-10"]));
+        recent.tick(&empty);
+        recent.tick(&empty);
+
+        let due = recent.tick(&empty);
+        assert_eq!(due.len(), 1);
+        assert_eq!(
+            due[0].1,
+            HashSet::from(["2026-09".to_string(), "2026-10".to_string()])
+        );
     }
 
     #[test]
     fn test_recently_offline_reconnect_cancels_pending() {
         let mut recent = RecentlyOffline::default();
-        let mut online = HashSet::new();
-        online.insert(123_u64);
+        let online = online_set(&["2026-09"]);
+        let empty = HashMap::new();
 
-        recent.tick(&online, "2026-09");
-        online.clear();
-        recent.tick(&online, "2026-09");
+        recent.tick(&online);
+        recent.tick(&empty);
         // reconnect before the wait elapses
-        online.insert(123_u64);
-        recent.tick(&online, "2026-09");
+        recent.tick(&online);
 
         assert!(recent.pending.is_empty());
-        online.clear();
-        assert!(recent.tick(&online, "2026-09").is_empty());
+        assert!(recent.tick(&empty).is_empty());
     }
 
     #[test]
     fn test_recently_offline_regress_retries_then_gives_up() {
         let mut recent = RecentlyOffline::default();
-        let mut online = HashSet::new();
-        online.insert(123_u64);
-        recent.tick(&online, "2026-09");
-        online.clear();
-        recent.tick(&online, "2026-09");
-        recent.tick(&online, "2026-09");
+        let empty = HashMap::new();
+
+        recent.tick(&online_set(&["2026-09"]));
+        recent.tick(&empty);
+        recent.tick(&empty);
 
         // first attempt regresses (session not yet finalized); retry is queued
-        assert!(!recent.tick(&online, "2026-09").is_empty());
+        assert!(!recent.tick(&empty).is_empty());
         recent.mark_regressed(123);
-        assert!(recent.tick(&online, "2026-09").is_empty());
-        assert!(!recent.tick(&online, "2026-09").is_empty());
+        assert!(recent.tick(&empty).is_empty());
+        assert!(!recent.tick(&empty).is_empty());
         recent.mark_regressed(123);
-        assert!(recent.tick(&online, "2026-09").is_empty());
-        assert!(!recent.tick(&online, "2026-09").is_empty());
+        assert!(recent.tick(&empty).is_empty());
+        assert!(!recent.tick(&empty).is_empty());
 
         // third regress exhausts the attempt cap
         recent.mark_regressed(123);
