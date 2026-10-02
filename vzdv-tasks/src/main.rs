@@ -110,13 +110,13 @@ async fn main() {
             async move {
                 debug!("Partial activity sync tick");
                 // don't try to do a partial update when the full update is processing
-                if activity_semaphore.try_acquire().is_err() {
-                    return;
-                }
-                if let Err(e) =
-                    activity::update_online_controller_activity(&config, &db, &recent_offline).await
-                {
-                    error!("Error updating partial activity: {e}");
+                if let Ok(_sem) = activity_semaphore.try_acquire() {
+                    if let Err(e) =
+                        activity::update_online_controller_activity(&config, &db, &recent_offline)
+                            .await
+                    {
+                        error!("Error updating partial activity: {e}");
+                    }
                 }
             }
         });
@@ -134,7 +134,7 @@ async fn main() {
             async move {
                 debug!("Full activity sync tick");
                 // lock the semaphore while updating the whole activity table
-                let _ = activity_semaphore.acquire().await.unwrap();
+                let _sem = activity_semaphore.acquire().await.unwrap();
                 info!("Updating all activity");
                 match activity::true_up_all_controllers_activity(&config, &db).await {
                     Ok(_) => info!("Full activity update successful"),
