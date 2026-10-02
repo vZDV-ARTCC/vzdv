@@ -127,7 +127,7 @@ async fn main() {
         let db = Arc::clone(&db);
         let config = Arc::clone(&config);
         let activity_semaphore = Arc::clone(&activity_semaphore);
-        scheduler.every(6.hours()).run(move || {
+        let full_sync_task = move || {
             let db = Arc::clone(&db);
             let config = Arc::clone(&config);
             let activity_semaphore = Arc::clone(&activity_semaphore);
@@ -141,7 +141,10 @@ async fn main() {
                     Err(e) => error!("Error updating full activity: {e}"),
                 }
             }
-        });
+        };
+        // Run one at startup
+        full_sync_task().await;
+        scheduler.every(2.hours()).run(full_sync_task);
     }
 
     // every 30 minutes, solo cert expiration check
