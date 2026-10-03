@@ -28,6 +28,7 @@ pub mod config;
 pub mod db;
 pub mod email;
 pub mod kden;
+pub mod splits;
 pub mod sql;
 pub mod vatsim;
 pub mod vatusa;

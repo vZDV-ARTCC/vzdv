@@ -7,7 +7,7 @@ use clap::Parser;
 use clokwerk::{AsyncScheduler, TimeUnits};
 use log::{debug, error, info};
 use std::{path::PathBuf, sync::Arc, time::Duration};
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex, Semaphore};
 use vzdv::general_setup;
 
 mod activity;
@@ -54,6 +54,7 @@ async fn main() {
 
     let roster_semaphore = Arc::new(Semaphore::new(1));
     let activity_semaphore = Arc::new(Semaphore::new(1));
+    let recent_offline = Arc::new(Mutex::new(activity::RecentlyOffline::default()));
 
     // every 5 minutes, partial roster update
     {
@@ -100,17 +101,26 @@ async fn main() {
         let db = Arc::clone(&db);
         let config = Arc::clone(&config);
         let activity_semaphore = Arc::clone(&activity_semaphore);
+        let recent_offline = Arc::clone(&recent_offline);
         scheduler.every(15.minutes()).run(move || {
             let db = Arc::clone(&db);
             let config = Arc::clone(&config);
             let activity_semaphore = Arc::clone(&activity_semaphore);
+            let recent_offline = Arc::clone(&recent_offline);
             async move {
                 debug!("Partial activity sync tick");
                 // don't try to do a partial update when the full update is processing
-                if activity_semaphore.try_acquire().is_err() {
+                let Ok(_sem) = activity_semaphore.try_acquire() else {
                     return;
-                }
-                if let Err(e) = activity::update_online_controller_activity(&config, &db).await {
+                };
+                if let Err(e) = activity::update_online_controller_activity(
+                    &activity::LiveVatsim,
+                    &config,
+                    &db,
+                    &recent_offline,
+                )
+                .await
+                {
                     error!("Error updating partial activity: {e}");
                 }
             }
@@ -121,22 +131,31 @@ async fn main() {
     {
         let db = Arc::clone(&db);
         let config = Arc::clone(&config);
-        let roster_semaphore = Arc::clone(&roster_semaphore);
-        scheduler.every(6.hours()).run(move || {
+        let activity_semaphore = Arc::clone(&activity_semaphore);
+        let full_sync_task = move || {
             let db = Arc::clone(&db);
             let config = Arc::clone(&config);
-            let roster_semaphore = Arc::clone(&roster_semaphore);
+            let activity_semaphore = Arc::clone(&activity_semaphore);
             async move {
                 debug!("Full activity sync tick");
-                // lock the semaphore while updating the whole roster
-                let _ = roster_semaphore.acquire().await.unwrap();
+                // lock the semaphore while updating the whole activity table
+                let _sem = activity_semaphore.acquire().await.unwrap();
                 info!("Updating all activity");
-                match activity::true_up_all_controllers_activity(&config, &db).await {
+                match activity::true_up_all_controllers_activity(
+                    &activity::LiveVatsim,
+                    &config,
+                    &db,
+                )
+                .await
+                {
                     Ok(_) => info!("Full activity update successful"),
                     Err(e) => error!("Error updating full activity: {e}"),
                 }
             }
-        });
+        };
+        // Run one at startup
+        full_sync_task().await;
+        scheduler.every(2.hours()).run(full_sync_task);
     }
 
     // every 30 minutes, solo cert expiration check
