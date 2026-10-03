@@ -24,7 +24,7 @@ use twilight_util::builder::{
 use vzdv::{
     config::Config,
     controller_can_see,
-    sql::{self, Controller, EventPosition},
+    sql::{self, Controller, EventCicPosition, EventPosition},
 };
 
 #[derive(Debug, CommandModel, CreateCommand)]
@@ -306,29 +306,49 @@ pub async fn handler(
                                 sqlx::query_as(sql::GET_ALL_CONTROLLERS)
                                     .fetch_all(db)
                                     .await?;
+                            let assignee = |cid: Option<u32>| match cid {
+                                Some(cid) => {
+                                    let controller = controllers.iter().find(|c| c.cid == cid);
+                                    match controller {
+                                        Some(c) => match &c.discord_id {
+                                            Some(d_id) => format!("<@{d_id}>"),
+                                            None => format!("{} {}", c.first_name, c.last_name),
+                                        },
+                                        None => String::from("Unknown"),
+                                    }
+                                }
+                                None => String::from("Unassigned"),
+                            };
                             let positions: Vec<EventPosition> =
                                 sqlx::query_as(sql::GET_EVENT_POSITIONS)
                                     .bind(event_id)
                                     .fetch_all(db)
                                     .await?;
                             for position in positions {
-                                let val = match position.cid {
-                                    Some(cid) => {
-                                        let controller = controllers.iter().find(|c| c.cid == cid);
-                                        match controller {
-                                            Some(c) => match &c.discord_id {
-                                                Some(d_id) => format!("<@{d_id}>"),
-                                                None => format!("{} {}", c.first_name, c.last_name),
-                                            },
-                                            None => String::from("Unknown"),
-                                        }
-                                    }
-                                    None => String::from("Unassigned"),
-                                };
-                                embed = embed
-                                    .field(EmbedFieldBuilder::new(&position.name, val).inline());
+                                embed = embed.field(
+                                    EmbedFieldBuilder::new(&position.name, assignee(position.cid))
+                                        .inline(),
+                                );
                             }
-                            embed = embed.description("Position assignments");
+                            // listed in the description rather than as fields to stay under
+                            // Discord's limit of 25 fields per embed
+                            let cic_positions: Vec<EventCicPosition> =
+                                sqlx::query_as(sql::GET_EVENT_CIC_POSITIONS)
+                                    .bind(event_id)
+                                    .fetch_all(db)
+                                    .await?;
+                            let mut description = String::from("Position assignments");
+                            if !cic_positions.is_empty() {
+                                description.push_str("\n\n**CICs**");
+                                for position in cic_positions {
+                                    description.push_str(&format!(
+                                        "\n{}: {}",
+                                        position.category,
+                                        assignee(position.cid)
+                                    ));
+                                }
+                            }
+                            embed = embed.description(description);
                         }
                         embed.validate()?.build()
                     };
