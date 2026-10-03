@@ -13,7 +13,7 @@ pub enum WeatherConditions {
 }
 
 /// Parsed weather information for an airport.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirportWeather {
     pub name: String,
     pub conditions: WeatherConditions,

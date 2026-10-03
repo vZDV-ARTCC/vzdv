@@ -1,5 +1,4 @@
-use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::{
@@ -7,14 +6,88 @@ use crate::{
     sql::Atis,
 };
 
+const NO_METAR: &str = "No METAR available";
+const NO_RULE: &str = "No rule matches the current weather";
+
+/// The kind of ATIS a vATIS station broadcasts.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize, sqlx::Type,
+)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase")]
+pub enum AtisType {
+    Combined,
+    Departure,
+    Arrival,
+}
+
+impl AtisType {
+    /// Callsign vATIS connects to VATSIM with for this ATIS.
+    pub fn callsign(self, facility: &str) -> String {
+        match self {
+            Self::Combined => format!("{facility}_ATIS"),
+            Self::Departure => format!("{facility}_D_ATIS"),
+            Self::Arrival => format!("{facility}_A_ATIS"),
+        }
+    }
+}
+
+/// Where a resolved flow came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FlowSource {
+    /// The preset of an online vATIS.
+    Atis,
+    /// Matched to another airport's current flow (`tryMatch`).
+    Matched,
+    /// Estimated from the weather using the configured rules.
+    Weather,
+}
+
+/// One side (departures or arrivals) of an airport's flow.
 #[derive(Debug, Clone, PartialEq)]
+pub struct FlowSide {
+    pub name: String,
+    /// Runway → departure corridors or arrival gates (empty lists for combined airports).
+    pub rwys: HashMap<String, Vec<String>>,
+    pub source: FlowSource,
+}
+
+/// An airport's current flow. Either side may be missing if it couldn't be determined.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ResolvedFlow {
-    /// Runway → list of departure corridors (or arrival runways) assigned to it.
-    pub dep_rwys: HashMap<String, Vec<String>>,
-    /// Runway → list of arrival gates assigned to it (empty for split airports).
-    pub arr_rwys: HashMap<String, Vec<String>>,
-    pub dep_name: Option<String>,
-    pub arr_name: Option<String>,
+    pub dep: Option<FlowSide>,
+    pub arr: Option<FlowSide>,
+    /// Problems hit while resolving, e.g. an unknown ATIS preset or missing weather.
+    pub issues: Vec<String>,
+}
+
+impl ResolvedFlow {
+    pub fn dep_name(&self) -> Option<&str> {
+        self.dep.as_ref().map(|side| side.name.as_str())
+    }
+
+    pub fn arr_name(&self) -> Option<&str> {
+        self.arr.as_ref().map(|side| side.name.as_str())
+    }
+
+    fn issue(&mut self, issue: impl Into<String>) {
+        let issue = issue.into();
+        if !self.issues.contains(&issue) {
+            self.issues.push(issue);
+        }
+    }
+
+    fn with_combined(mut self, flow: &Flow, source: FlowSource) -> Self {
+        let side = |rwys: &[String]| FlowSide {
+            name: flow.name.clone(),
+            rwys: rwys_to_map(rwys),
+            source,
+        };
+        self.dep = Some(side(&flow.dep_rwys));
+        self.arr = Some(side(&flow.arr_rwys));
+        self
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -25,40 +98,53 @@ pub enum AirportProcedure {
 }
 
 impl AirportProcedure {
-    pub fn determine_flow(
+    /// Resolve the airport's current flow.
+    ///
+    /// An online ATIS's preset wins. Otherwise the flow is matched to the
+    /// reference airport's flow in `current` (`tryMatch`), or estimated from
+    /// the weather. Passing no ATIS gives the weather-based suggestion.
+    pub fn resolve(
         &self,
-        weather: &AirportWeather,
-        atis_list: &[Atis],
-    ) -> Result<ResolvedFlow> {
-        self.determine_flow_with_matches(weather, atis_list, &HashMap::new())
-    }
-
-    pub fn determine_flow_with_matches(
-        &self,
-        weather: &AirportWeather,
-        atis_list: &[Atis],
-        current_flows: &HashMap<String, ResolvedFlow>,
-    ) -> Result<ResolvedFlow> {
+        icao: &str,
+        weather: Option<&AirportWeather>,
+        atis: &[Atis],
+        current: &HashMap<String, ResolvedFlow>,
+    ) -> ResolvedFlow {
         match self {
-            AirportProcedure::Combined(proc) => {
-                proc.determine_flow_with_matches(weather, atis_list, current_flows)
-            }
-            AirportProcedure::Split(proc) => proc.determine_flow(weather, atis_list),
+            Self::Combined(proc) => proc.resolve(icao, weather, atis, current),
+            Self::Split(proc) => proc.resolve(icao, weather, atis),
         }
     }
 
-    /// Determine the ideal departure flow name based solely on current weather and
-    /// the configured SOP rules. Returns `None` if no rule matches the weather.
-    pub fn suggest_flow(&self, weather: &AirportWeather) -> Option<String> {
+    /// The airport whose flow this one tries to match, if any.
+    pub fn try_match_icao(&self) -> Option<&str> {
         match self {
-            AirportProcedure::Combined(proc) => proc.suggest_flow(weather),
-            AirportProcedure::Split(proc) => proc.suggest_flow(weather),
+            Self::Combined(proc) => proc.try_match.as_ref().map(|t| t.icao.as_str()),
+            Self::Split(_) => None,
+        }
+    }
+
+    /// Wind bounds of every rule, for config validation.
+    pub(crate) fn rule_bounds(
+        &self,
+    ) -> Vec<(Option<&WindDirectionBounds>, Option<&WindSpeedBounds>)> {
+        match self {
+            Self::Combined(proc) => proc
+                .rules
+                .iter()
+                .map(|r| (r.direction_bounds.as_ref(), r.speed_bounds.as_ref()))
+                .collect(),
+            Self::Split(proc) => proc
+                .rules
+                .iter()
+                .map(|r| (r.direction_bounds.as_ref(), r.speed_bounds.as_ref()))
+                .collect(),
         }
     }
 }
 
 #[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CombinedProcedure {
     pub flows: HashMap<String, Flow>,
     pub rules: Vec<FlowRule>,
@@ -66,86 +152,71 @@ pub struct CombinedProcedure {
 }
 
 impl CombinedProcedure {
-    pub fn determine_flow(
+    fn resolve(
         &self,
-        weather: &AirportWeather,
-        atis_list: &[Atis],
-    ) -> Result<ResolvedFlow> {
-        self.determine_flow_with_matches(weather, atis_list, &HashMap::new())
-    }
-
-    pub fn determine_flow_with_matches(
-        &self,
-        weather: &AirportWeather,
-        atis_list: &[Atis],
-        current_flows: &HashMap<String, ResolvedFlow>,
-    ) -> Result<ResolvedFlow> {
-        let icao = format!("K{}", &weather.name);
-
-        // If there's a combined ATIS up for this airport, use that
-        if let Some(atis) = atis_list
-            .iter()
-            .find(|a| a.facility == icao && a.atis_type == "combined")
-        {
-            let flow = self.flows.get(&atis.preset).ok_or_else(|| {
-                anyhow::anyhow!("Flow '{}' not found for airport {}", atis.preset, icao)
-            })?;
-            return Ok(resolve_combined_flow(flow));
-        }
-
-        if let Some(try_match) = &self.try_match {
-            let wind_kts = weather.wind.1.max(weather.wind.2) as u32;
-            let wind_allows_match = try_match
-                .match_when_wind_lt
-                .is_none_or(|limit| wind_kts < limit);
-            if wind_allows_match
-                && let Some(reference_flow) = current_flows.get(&try_match.icao)
-                && let Some(reference_name) = reference_flow.dep_name.as_ref()
-                && let Some(flow_by_conditions) = try_match.match_flows.get(reference_name)
-            {
-                let flow_name = flow_by_conditions.for_conditions(&weather.conditions);
-                let flow = self.flows.get(flow_name).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Flow '{}' matched from {} flow '{}' but was not found for airport {}",
-                        flow_name,
-                        try_match.icao,
-                        reference_name,
-                        icao
-                    )
-                })?;
-                return Ok(resolve_combined_flow(flow));
+        icao: &str,
+        weather: Option<&AirportWeather>,
+        atis: &[Atis],
+        current: &HashMap<String, ResolvedFlow>,
+    ) -> ResolvedFlow {
+        let mut resolved = ResolvedFlow::default();
+        if let Some(atis) = find_atis(atis, icao, AtisType::Combined) {
+            match self.flows.get(&atis.preset) {
+                Some(flow) => return resolved.with_combined(flow, FlowSource::Atis),
+                None => resolved.issue(format!("ATIS preset '{}' is not configured", atis.preset)),
             }
         }
-
-        // Fall through to weather-based rules
-        let rule = find_matching_rule(&self.rules, weather)?;
-        let flow = self.flows.get(&rule.use_flow).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Flow '{}' not found for rule at {} {:?}",
-                rule.use_flow,
-                icao,
-                rule
-            )
-        })?;
-        Ok(resolve_combined_flow(flow))
+        let Some(weather) = weather else {
+            resolved.issue(NO_METAR);
+            return resolved;
+        };
+        if let Some(flow) = self.matched_flow(weather, current) {
+            return resolved.with_combined(flow, FlowSource::Matched);
+        }
+        match find_matching_rule(&self.rules, weather)
+            .and_then(|rule| self.flows.get(&rule.use_flow))
+        {
+            Some(flow) => resolved.with_combined(flow, FlowSource::Weather),
+            None => {
+                resolved.issue(NO_RULE);
+                resolved
+            }
+        }
     }
 
-    pub fn suggest_flow(&self, weather: &AirportWeather) -> Option<String> {
-        find_matching_rule(&self.rules, weather)
-            .ok()
-            .map(|rule| rule.use_flow.clone())
+    /// The local flow mapped to the reference airport's current departure
+    /// flow, if the wind is light enough to match.
+    fn matched_flow(
+        &self,
+        weather: &AirportWeather,
+        current: &HashMap<String, ResolvedFlow>,
+    ) -> Option<&Flow> {
+        let try_match = self.try_match.as_ref()?;
+        let wind_kts = u32::from(weather.wind.1.max(weather.wind.2));
+        if try_match
+            .match_when_wind_lt
+            .is_some_and(|limit| wind_kts >= limit)
+        {
+            return None;
+        }
+        let reference = current.get(&try_match.icao)?.dep_name()?;
+        let local = try_match
+            .match_flows
+            .get(reference)?
+            .for_conditions(&weather.conditions);
+        self.flows.get(local)
     }
 }
 
 #[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DepCorridor {
     pub direction: String,
     pub gates: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SplitProcedure {
     pub dep_corridors: HashMap<String, DepCorridor>,
     pub dep_flows: HashMap<String, SplitFlow>,
@@ -154,89 +225,83 @@ pub struct SplitProcedure {
 }
 
 impl SplitProcedure {
-    pub fn determine_flow(
-        &self,
-        weather: &AirportWeather,
-        atis_list: &[Atis],
-    ) -> Result<ResolvedFlow> {
-        let icao = format!("K{}", &weather.name);
-        let airport_atis: Vec<_> = atis_list.iter().filter(|a| a.facility == icao).collect();
-
-        let dep_atis = airport_atis.iter().find(|a| a.atis_type == "departure");
-        let arr_atis = airport_atis.iter().find(|a| a.atis_type == "arrival");
-
-        // Resolve departure runways
-        let (dep_rwys, dep_name) = if let Some(atis) = dep_atis {
-            let flow = self.dep_flows.get(&atis.preset).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Departure flow '{}' not found for airport {}",
-                    atis.preset,
-                    icao
-                )
-            })?;
-            (flow.rwys.clone(), Some(atis.preset.clone()))
-        } else {
-            // Weather-determine departure
-            let rule = find_matching_split_rule(&self.rules, weather)?;
-            let flow = self.dep_flows.get(&rule.use_dep_flow).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Departure flow '{}' not found for rule at {} {:?}",
-                    rule.use_dep_flow,
-                    icao,
-                    rule
-                )
-            })?;
-            (flow.rwys.clone(), Some(rule.use_dep_flow.clone()))
+    fn resolve(&self, icao: &str, weather: Option<&AirportWeather>, atis: &[Atis]) -> ResolvedFlow {
+        let rule = match weather {
+            Some(weather) => find_matching_split_rule(&self.rules, weather).ok_or(NO_RULE),
+            None => Err(NO_METAR),
         };
-
-        // Resolve arrival runways
-        let (arr_rwys, arr_name) = if let Some(atis) = arr_atis {
-            let flow = self.arr_flows.get(&atis.preset).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Arrival flow '{}' not found for airport {}",
-                    atis.preset,
-                    icao
-                )
-            })?;
-            (flow.rwys.clone(), Some(atis.preset.clone()))
-        } else {
-            // Weather-determine arrival
-            let rule = find_matching_split_rule(&self.rules, weather)?;
-            let flow = self.arr_flows.get(&rule.use_arr_flow).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Arrival flow '{}' not found for rule at {} {:?}",
-                    rule.use_arr_flow,
-                    icao,
-                    rule
-                )
-            })?;
-            (flow.rwys.clone(), Some(rule.use_arr_flow.clone()))
-        };
-
-        Ok(ResolvedFlow {
-            dep_rwys,
-            arr_rwys,
-            dep_name,
-            arr_name,
-        })
-    }
-
-    pub fn suggest_flow(&self, weather: &AirportWeather) -> Option<String> {
-        find_matching_split_rule(&self.rules, weather)
-            .ok()
-            .map(|rule| rule.use_dep_flow.clone())
+        let mut resolved = ResolvedFlow::default();
+        let dep = split_side(
+            &mut resolved,
+            "Departure",
+            &self.dep_flows,
+            find_atis(atis, icao, AtisType::Departure),
+            rule.map(|r| r.use_dep_flow.as_str()),
+        );
+        let arr = split_side(
+            &mut resolved,
+            "Arrival",
+            &self.arr_flows,
+            find_atis(atis, icao, AtisType::Arrival),
+            rule.map(|r| r.use_arr_flow.as_str()),
+        );
+        resolved.dep = dep;
+        resolved.arr = arr;
+        resolved
     }
 }
 
+/// Resolve one side of a split airport: its ATIS preset if known, else the
+/// weather rule's flow.
+fn split_side(
+    resolved: &mut ResolvedFlow,
+    label: &str,
+    flows: &HashMap<String, SplitFlow>,
+    atis: Option<&Atis>,
+    rule_flow: Result<&str, &str>,
+) -> Option<FlowSide> {
+    if let Some(atis) = atis {
+        match flows.get(&atis.preset) {
+            Some(flow) => {
+                return Some(FlowSide {
+                    name: atis.preset.clone(),
+                    rwys: flow.rwys.clone(),
+                    source: FlowSource::Atis,
+                });
+            }
+            None => resolved.issue(format!(
+                "{label} ATIS preset '{}' is not configured",
+                atis.preset
+            )),
+        }
+    }
+    match rule_flow {
+        Ok(name) => flows.get(name).map(|flow| FlowSide {
+            name: name.to_string(),
+            rwys: flow.rwys.clone(),
+            source: FlowSource::Weather,
+        }),
+        Err(issue) => {
+            resolved.issue(issue);
+            None
+        }
+    }
+}
+
+fn find_atis<'a>(atis: &'a [Atis], icao: &str, atis_type: AtisType) -> Option<&'a Atis> {
+    atis.iter()
+        .find(|a| a.facility == icao && a.atis_type == atis_type)
+}
+
 #[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SplitFlow {
-    /// Runway number/name → category → list of departure gates assigned to it.
+    /// Runway → departure corridors (or arrival gates) assigned to it.
     pub rwys: HashMap<String, Vec<String>>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SplitFlowRule {
     #[serde(default)]
     pub calm: bool,
@@ -248,7 +313,7 @@ pub struct SplitFlowRule {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TryMatchProcedure {
     pub icao: String,
     pub match_flows: HashMap<String, TryMatchFlowByConditions>,
@@ -256,7 +321,7 @@ pub struct TryMatchProcedure {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TryMatchFlowByConditions {
     pub(crate) vmc: String,
     pub(crate) imc: String,
@@ -272,7 +337,7 @@ impl TryMatchFlowByConditions {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Flow {
     pub name: String,
     pub dep_rwys: Vec<String>,
@@ -280,7 +345,7 @@ pub struct Flow {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FlowRule {
     #[serde(default)]
     pub calm: bool,
@@ -288,15 +353,6 @@ pub struct FlowRule {
     pub use_flow: String,
     pub direction_bounds: Option<WindDirectionBounds>,
     pub speed_bounds: Option<WindSpeedBounds>,
-}
-
-fn resolve_combined_flow(flow: &Flow) -> ResolvedFlow {
-    ResolvedFlow {
-        dep_rwys: rwys_to_map(&flow.dep_rwys),
-        arr_rwys: rwys_to_map(&flow.arr_rwys),
-        dep_name: Some(flow.name.clone()),
-        arr_name: Some(flow.name.clone()),
-    }
 }
 
 /// Convert a simple runway list (from combined flows) into the standard
@@ -345,44 +401,38 @@ fn matches_wind_rule(
     }
 }
 
-fn find_matching_rule<'a>(rules: &'a [FlowRule], weather: &AirportWeather) -> Result<&'a FlowRule> {
-    rules
-        .iter()
-        .find(|rule| {
-            matches_wind_rule(
-                weather,
-                rule.calm,
-                &rule.conds,
-                &rule.direction_bounds,
-                &rule.speed_bounds,
-            )
-        })
-        .ok_or_else(|| anyhow::anyhow!("No matching procedure rule found"))
+fn find_matching_rule<'a>(rules: &'a [FlowRule], weather: &AirportWeather) -> Option<&'a FlowRule> {
+    rules.iter().find(|rule| {
+        matches_wind_rule(
+            weather,
+            rule.calm,
+            &rule.conds,
+            &rule.direction_bounds,
+            &rule.speed_bounds,
+        )
+    })
 }
 
 fn find_matching_split_rule<'a>(
     rules: &'a [SplitFlowRule],
     weather: &AirportWeather,
-) -> Result<&'a SplitFlowRule> {
-    rules
-        .iter()
-        .find(|rule| {
-            matches_wind_rule(
-                weather,
-                rule.calm,
-                &rule.conds,
-                &rule.direction_bounds,
-                &rule.speed_bounds,
-            )
-        })
-        .ok_or_else(|| anyhow::anyhow!("No matching procedure rule found"))
+) -> Option<&'a SplitFlowRule> {
+    rules.iter().find(|rule| {
+        matches_wind_rule(
+            weather,
+            rule.calm,
+            &rule.conds,
+            &rule.direction_bounds,
+            &rule.speed_bounds,
+        )
+    })
 }
 
 #[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WindSpeedBounds {
-    min_kts: u8,
-    max_kts: u8,
+    pub(crate) min_kts: u8,
+    pub(crate) max_kts: u8,
 }
 
 impl WindSpeedBounds {
@@ -393,7 +443,7 @@ impl WindSpeedBounds {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WindDirectionBounds {
     pub wind_from: u16,
     pub clock_dir: ClockDir,
@@ -455,6 +505,43 @@ mod tests {
         serde_json::from_str(&file_s).unwrap()
     }
 
+    fn weather(name: &str, conditions: WeatherConditions, wind: (u16, u8, u8)) -> AirportWeather {
+        AirportWeather {
+            ceiling: 0,
+            conditions,
+            name: name.into(),
+            raw: String::new(),
+            visibility: 10,
+            wind,
+            altimeter: None,
+        }
+    }
+
+    fn atis(facility: &str, atis_type: AtisType, preset: &str) -> Atis {
+        Atis {
+            airport_conditions: String::new(),
+            atis_letter: "A".into(),
+            atis_type,
+            facility: facility.into(),
+            id: 0,
+            notams: String::new(),
+            preset: preset.into(),
+            timestamp: Utc::now(),
+            version: String::new(),
+            text_atis: String::new(),
+        }
+    }
+
+    /// Resolve an airport from the real config with no other airports' flows.
+    fn resolve(
+        config: &ConfigIDS,
+        icao: &str,
+        weather: Option<&AirportWeather>,
+        atis: &[Atis],
+    ) -> ResolvedFlow {
+        config.0[icao].resolve(icao, weather, atis, &HashMap::new())
+    }
+
     fn try_match_procedure() -> AirportProcedure {
         serde_json::from_value(serde_json::json!({
             "type": "combined",
@@ -480,160 +567,102 @@ mod tests {
         .unwrap()
     }
 
+    fn den_east() -> HashMap<String, ResolvedFlow> {
+        let side = FlowSide {
+            name: "DEN EAST".into(),
+            rwys: HashMap::new(),
+            source: FlowSource::Atis,
+        };
+        HashMap::from([(
+            "KDEN".to_string(),
+            ResolvedFlow {
+                dep: Some(side.clone()),
+                arr: Some(side),
+                issues: Vec::new(),
+            },
+        )])
+    }
+
     #[test]
     fn try_match_selects_mapped_flow_when_wind_allows() {
-        let procedure = try_match_procedure();
-        let weather = AirportWeather {
-            ceiling: 10_000,
-            conditions: WeatherConditions::VFR,
-            name: "APA".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (180, 8, 0),
-            altimeter: None,
-        };
-        let mut current_flows = HashMap::new();
-        current_flows.insert(
-            "KDEN".into(),
-            ResolvedFlow {
-                dep_rwys: HashMap::new(),
-                arr_rwys: HashMap::new(),
-                dep_name: Some("DEN EAST".into()),
-                arr_name: Some("DEN EAST".into()),
-            },
-        );
-
-        let flow = procedure
-            .determine_flow_with_matches(&weather, &[], &current_flows)
-            .unwrap();
-
-        assert_eq!(flow.dep_name.as_deref(), Some("LOCAL EAST VMC"));
+        let weather = weather("APA", WeatherConditions::VFR, (180, 8, 0));
+        let flow = try_match_procedure().resolve("KAPA", Some(&weather), &[], &den_east());
+        assert_eq!(flow.dep_name(), Some("LOCAL EAST VMC"));
+        assert_eq!(flow.dep.unwrap().source, FlowSource::Matched);
     }
 
     #[test]
     fn try_match_selects_imc_flow_for_ifr_conditions() {
-        let procedure = try_match_procedure();
-        let weather = AirportWeather {
-            ceiling: 500,
-            conditions: WeatherConditions::IFR,
-            name: "APA".into(),
-            raw: "".into(),
-            visibility: 2,
-            wind: (180, 8, 0),
-            altimeter: None,
-        };
-        let mut current_flows = HashMap::new();
-        current_flows.insert(
-            "KDEN".into(),
-            ResolvedFlow {
-                dep_rwys: HashMap::new(),
-                arr_rwys: HashMap::new(),
-                dep_name: Some("DEN EAST".into()),
-                arr_name: Some("DEN EAST".into()),
-            },
-        );
-
-        let flow = procedure
-            .determine_flow_with_matches(&weather, &[], &current_flows)
-            .unwrap();
-
-        assert_eq!(flow.dep_name.as_deref(), Some("LOCAL EAST IMC"));
+        let weather = weather("APA", WeatherConditions::IFR, (180, 8, 0));
+        let flow = try_match_procedure().resolve("KAPA", Some(&weather), &[], &den_east());
+        assert_eq!(flow.dep_name(), Some("LOCAL EAST IMC"));
     }
 
     #[test]
     fn try_match_falls_back_to_weather_at_wind_limit() {
-        let procedure = try_match_procedure();
-        let weather = AirportWeather {
-            ceiling: 10_000,
-            conditions: WeatherConditions::VFR,
-            name: "APA".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (180, 10, 15),
-            altimeter: None,
-        };
-        let mut current_flows = HashMap::new();
-        current_flows.insert(
-            "KDEN".into(),
-            ResolvedFlow {
-                dep_rwys: HashMap::new(),
-                arr_rwys: HashMap::new(),
-                dep_name: Some("DEN EAST".into()),
-                arr_name: Some("DEN EAST".into()),
-            },
-        );
-
-        let flow = procedure
-            .determine_flow_with_matches(&weather, &[], &current_flows)
-            .unwrap();
-
-        assert_eq!(flow.dep_name.as_deref(), Some("LOCAL WEST"));
+        let weather = weather("APA", WeatherConditions::VFR, (180, 10, 15));
+        let flow = try_match_procedure().resolve("KAPA", Some(&weather), &[], &den_east());
+        assert_eq!(flow.dep_name(), Some("LOCAL WEST"));
+        assert_eq!(flow.dep.unwrap().source, FlowSource::Weather);
     }
 
     /// Even if winds favor another flow, choose whichever vATIS has sent
     #[test]
     fn atis_override() {
         let config = load_config();
-        let procedure = config.0.get("KAPA").unwrap();
-        let weather = AirportWeather {
-            ceiling: 0,
-            conditions: WeatherConditions::VFR,
-            name: "APA".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (180, 5, 10),
-            altimeter: None,
-        };
-        let atis = Atis {
-            airport_conditions: "".into(),
-            atis_letter: "A".into(),
-            atis_type: "combined".into(),
-            facility: "KAPA".into(),
-            id: 0,
-            notams: "".into(),
-            preset: "NORTH VMC".into(),
-            timestamp: Utc::now(),
-            version: "".into(),
-        };
+        let weather = weather("APA", WeatherConditions::VFR, (180, 5, 10));
+        let atis = atis("KAPA", AtisType::Combined, "NORTH VMC");
+        let flow = resolve(&config, "KAPA", Some(&weather), &[atis]);
+        assert_eq!(flow.dep_name(), Some("NORTH VMC"));
+        assert_eq!(flow.dep.unwrap().source, FlowSource::Atis);
+        assert!(flow.issues.is_empty());
+    }
 
-        let flow = procedure.determine_flow(&weather, &[atis]).unwrap();
-        assert_eq!(flow.dep_name.as_deref(), Some("NORTH VMC"))
+    #[test]
+    fn atis_resolves_without_weather() {
+        let config = load_config();
+        let atis = atis("KAPA", AtisType::Combined, "NORTH VMC");
+        let flow = resolve(&config, "KAPA", None, &[atis]);
+        assert_eq!(flow.dep_name(), Some("NORTH VMC"));
+        assert!(flow.issues.is_empty());
+    }
+
+    #[test]
+    fn unknown_atis_preset_falls_back_to_weather() {
+        let config = load_config();
+        let weather = weather("APA", WeatherConditions::VFR, (350, 5, 10));
+        let atis = atis("KAPA", AtisType::Combined, "BOGUS");
+        let flow = resolve(&config, "KAPA", Some(&weather), &[atis]);
+        assert_eq!(flow.dep_name(), Some("NORTH VMC"));
+        assert_eq!(flow.dep.unwrap().source, FlowSource::Weather);
+        assert_eq!(flow.issues, ["ATIS preset 'BOGUS' is not configured"]);
+    }
+
+    #[test]
+    fn no_weather_or_atis_reports_why() {
+        let config = load_config();
+        for icao in ["KAPA", "KDEN"] {
+            let flow = resolve(&config, icao, None, &[]);
+            assert_eq!(flow.dep, None);
+            assert_eq!(flow.arr, None);
+            assert_eq!(flow.issues, [NO_METAR]);
+        }
     }
 
     #[test]
     fn flow_from_calm_winds() {
         let config = load_config();
-        let procedure = config.0.get("KAPA").unwrap();
-        let weather = AirportWeather {
-            ceiling: 0,
-            conditions: WeatherConditions::VFR,
-            name: "APA".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (350, 1, 0),
-            altimeter: None,
-        };
-
-        let flow = procedure.determine_flow(&weather, &[]).unwrap();
-        assert_eq!(flow.dep_name.as_deref(), Some("SOUTH VMC"))
+        let weather = weather("APA", WeatherConditions::VFR, (350, 1, 0));
+        let flow = resolve(&config, "KAPA", Some(&weather), &[]);
+        assert_eq!(flow.dep_name(), Some("SOUTH VMC"))
     }
 
     #[test]
     fn flow_from_non_calm_winds() {
         let config = load_config();
-        let procedure = config.0.get("KAPA").unwrap();
-        let weather = AirportWeather {
-            ceiling: 0,
-            conditions: WeatherConditions::VFR,
-            name: "APA".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (350, 5, 10),
-            altimeter: None,
-        };
-
-        let flow = procedure.determine_flow(&weather, &[]).unwrap();
-        assert_eq!(flow.dep_name.as_deref(), Some("NORTH VMC"))
+        let weather = weather("APA", WeatherConditions::VFR, (350, 5, 10));
+        let flow = resolve(&config, "KAPA", Some(&weather), &[]);
+        assert_eq!(flow.dep_name(), Some("NORTH VMC"))
     }
 
     #[test]
@@ -652,111 +681,20 @@ mod tests {
     // ASE Tests
 
     #[test]
-    fn ase_vmc_flow() {
+    fn ase_flows() {
         let config = load_config();
-        let procedure = config.0.get("KASE").unwrap();
-        let weather = AirportWeather {
-            ceiling: 0,
-            conditions: WeatherConditions::VFR,
-            name: "ASE".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (350, 5, 9),
-            altimeter: None,
-        };
-
-        let flow = procedure.determine_flow(&weather, &[]).unwrap();
-        assert_eq!(flow.dep_name.as_deref(), Some("VMC"))
-    }
-
-    #[test]
-    fn ase_vmc_15_tw_flow() {
-        let config = load_config();
-        let procedure = config.0.get("KASE").unwrap();
-        let weather = AirportWeather {
-            ceiling: 0,
-            conditions: WeatherConditions::VFR,
-            name: "ASE".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (350, 5, 15),
-            altimeter: None,
-        };
-
-        let flow = procedure.determine_flow(&weather, &[]).unwrap();
-        assert_eq!(flow.dep_name.as_deref(), Some("VMC 15 TAILWIND"))
-    }
-
-    #[test]
-    fn ase_vmc_33_tw_flow() {
-        let config = load_config();
-        let procedure = config.0.get("KASE").unwrap();
-        let weather = AirportWeather {
-            ceiling: 0,
-            conditions: WeatherConditions::VFR,
-            name: "ASE".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (150, 5, 15),
-            altimeter: None,
-        };
-
-        let flow = procedure.determine_flow(&weather, &[]).unwrap();
-        assert_eq!(flow.dep_name.as_deref(), Some("VMC 33 TAILWIND"))
-    }
-
-    #[test]
-    fn ase_imc_flow() {
-        let config = load_config();
-        let procedure = config.0.get("KASE").unwrap();
-        let weather = AirportWeather {
-            ceiling: 0,
-            conditions: WeatherConditions::IFR,
-            name: "ASE".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (350, 5, 9),
-            altimeter: None,
-        };
-
-        let flow = procedure.determine_flow(&weather, &[]).unwrap();
-        assert_eq!(flow.dep_name.as_deref(), Some("IMC"))
-    }
-
-    #[test]
-    fn ase_imc_15_tw_flow() {
-        let config = load_config();
-        let procedure = config.0.get("KASE").unwrap();
-        let weather = AirportWeather {
-            ceiling: 0,
-            conditions: WeatherConditions::IFR,
-            name: "ASE".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (350, 5, 15),
-            altimeter: None,
-        };
-
-        let flow = procedure.determine_flow(&weather, &[]).unwrap();
-        assert_eq!(flow.dep_name.as_deref(), Some("IMC 15 TAILWIND"))
-    }
-
-    #[test]
-    fn ase_imc_33_tw_flow() {
-        let config = load_config();
-        let procedure = config.0.get("KASE").unwrap();
-        let weather = AirportWeather {
-            ceiling: 0,
-            conditions: WeatherConditions::IFR,
-            name: "ASE".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (150, 5, 15),
-            altimeter: None,
-        };
-
-        let flow = procedure.determine_flow(&weather, &[]).unwrap();
-        assert_eq!(flow.dep_name.as_deref(), Some("IMC 33 TAILWIND"))
+        for (conditions, wind, expected) in [
+            (WeatherConditions::VFR, (350, 5, 9), "VMC"),
+            (WeatherConditions::VFR, (350, 5, 15), "VMC 15 TAILWIND"),
+            (WeatherConditions::VFR, (150, 5, 15), "VMC 33 TAILWIND"),
+            (WeatherConditions::IFR, (350, 5, 9), "IMC"),
+            (WeatherConditions::IFR, (350, 5, 15), "IMC 15 TAILWIND"),
+            (WeatherConditions::IFR, (150, 5, 15), "IMC 33 TAILWIND"),
+        ] {
+            let weather = weather("ASE", conditions.clone(), wind);
+            let flow = resolve(&config, "KASE", Some(&weather), &[]);
+            assert_eq!(flow.dep_name(), Some(expected), "{conditions:?} {wind:?}");
+        }
     }
 
     // KDEN Split ATIS Tests
@@ -764,166 +702,142 @@ mod tests {
     #[test]
     fn kden_split_atis_both_present() {
         let config = load_config();
-        let procedure = config.0.get("KDEN").unwrap();
-        let weather = AirportWeather {
-            ceiling: 0,
-            conditions: WeatherConditions::VFR,
-            name: "DEN".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (180, 5, 10),
-            altimeter: None,
-        };
-        let dep_atis = Atis {
-            airport_conditions: "".into(),
-            atis_letter: "A".into(),
-            atis_type: "departure".into(),
-            facility: "KDEN".into(),
-            id: 0,
-            notams: "".into(),
-            preset: "SOUTH ALL".into(),
-            timestamp: Utc::now(),
-            version: "".into(),
-        };
-        let arr_atis = Atis {
-            airport_conditions: "".into(),
-            atis_letter: "N".into(),
-            atis_type: "arrival".into(),
-            facility: "KDEN".into(),
-            id: 1,
-            notams: "".into(),
-            preset: "SOUTH ALL (VMC)".into(),
-            timestamp: Utc::now(),
-            version: "".into(),
-        };
+        let weather = weather("DEN", WeatherConditions::VFR, (180, 5, 10));
+        let dep_atis = atis("KDEN", AtisType::Departure, "SOUTH ALL");
+        let arr_atis = atis("KDEN", AtisType::Arrival, "SOUTH ALL (VMC)");
 
-        let flow = procedure
-            .determine_flow(&weather, &[dep_atis, arr_atis])
-            .unwrap();
-        assert_eq!(flow.dep_name.as_deref(), Some("SOUTH ALL"));
-        assert_eq!(flow.arr_name.as_deref(), Some("SOUTH ALL (VMC)"));
-        assert_eq!(sorted_rwy_names(&flow.dep_rwys), vec!["16L", "17L"]);
-        assert_eq!(sorted_rwy_names(&flow.arr_rwys), vec!["16L", "16R", "17R"]);
+        let flow = resolve(&config, "KDEN", Some(&weather), &[dep_atis, arr_atis]);
+        assert_eq!(flow.dep_name(), Some("SOUTH ALL"));
+        assert_eq!(flow.arr_name(), Some("SOUTH ALL (VMC)"));
+        let (dep, arr) = (flow.dep.unwrap(), flow.arr.unwrap());
+        assert_eq!(sorted_rwy_names(&dep.rwys), vec!["16L", "17L"]);
+        assert_eq!(sorted_rwy_names(&arr.rwys), vec!["16L", "16R", "17R"]);
+        assert_eq!(
+            (dep.source, arr.source),
+            (FlowSource::Atis, FlowSource::Atis)
+        );
     }
 
     #[test]
     fn kden_split_atis_only_departure() {
         let config = load_config();
-        let procedure = config.0.get("KDEN").unwrap();
         // VMC, south wind 11-25 kts -> weather should pick SOUTH EAST arr
-        let weather = AirportWeather {
-            ceiling: 0,
-            conditions: WeatherConditions::VFR,
-            name: "DEN".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (130, 5, 15),
-            altimeter: None,
-        };
-        let dep_atis = Atis {
-            airport_conditions: "".into(),
-            atis_letter: "A".into(),
-            atis_type: "departure".into(),
-            facility: "KDEN".into(),
-            id: 0,
-            notams: "".into(),
-            preset: "SOUTH EAST".into(),
-            timestamp: Utc::now(),
-            version: "".into(),
-        };
+        let weather = weather("DEN", WeatherConditions::VFR, (130, 5, 15));
+        let dep_atis = atis("KDEN", AtisType::Departure, "SOUTH EAST");
 
-        let flow = procedure.determine_flow(&weather, &[dep_atis]).unwrap();
-        assert_eq!(flow.dep_name.as_deref(), Some("SOUTH EAST"));
-        assert_eq!(sorted_rwy_names(&flow.dep_rwys), vec!["17L", "8"]);
+        let flow = resolve(&config, "KDEN", Some(&weather), &[dep_atis]);
+        let (dep, arr) = (flow.dep.unwrap(), flow.arr.unwrap());
+        assert_eq!(dep.name, "SOUTH EAST");
+        assert_eq!(sorted_rwy_names(&dep.rwys), vec!["17L", "8"]);
         // Arrival should be weather-determined: SOUTH EAST
-        assert_eq!(flow.arr_name.as_deref(), Some("SOUTH EAST"));
-        assert_eq!(
-            sorted_rwy_names(&flow.arr_rwys),
-            vec!["16L", "16R", "17R", "7"]
-        );
+        assert_eq!(arr.name, "SOUTH EAST");
+        assert_eq!(arr.source, FlowSource::Weather);
+        assert_eq!(sorted_rwy_names(&arr.rwys), vec!["16L", "16R", "17R", "7"]);
     }
 
     #[test]
-    fn kden_weather_fallback_south_calm_vmc() {
+    fn kden_split_atis_only_departure_without_weather() {
         let config = load_config();
-        let procedure = config.0.get("KDEN").unwrap();
-        let weather = AirportWeather {
-            ceiling: 0,
-            conditions: WeatherConditions::VFR,
-            name: "DEN".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (180, 1, 0),
-            altimeter: None,
-        };
-
-        let flow = procedure.determine_flow(&weather, &[]).unwrap();
-        assert_eq!(flow.dep_name.as_deref(), Some("SOUTH CALM"));
-        assert_eq!(flow.arr_name.as_deref(), Some("SOUTH CALM"));
-        assert_eq!(sorted_rwy_names(&flow.dep_rwys), vec!["17L", "25", "8"]);
-        assert_eq!(sorted_rwy_names(&flow.arr_rwys), vec!["16L", "16R", "17R"]);
+        let dep_atis = atis("KDEN", AtisType::Departure, "SOUTH EAST");
+        let flow = resolve(&config, "KDEN", None, &[dep_atis]);
+        assert_eq!(flow.dep_name(), Some("SOUTH EAST"));
+        assert_eq!(flow.arr, None);
+        assert_eq!(flow.issues, [NO_METAR]);
     }
 
     #[test]
-    fn kden_weather_fallback_south_calm_09007_vmc() {
+    fn kden_weather_fallback() {
         let config = load_config();
-        let procedure = config.0.get("KDEN").unwrap();
-        let weather = AirportWeather {
-            ceiling: 3456,
-            conditions: WeatherConditions::VFR,
-            name: "DEN".into(),
-            raw: "KDEN 280853Z 09007KT 10SM CLR 15/03 A2977 RMK AO2 SLP987 T01500028 53021".into(),
-            visibility: 10,
-            wind: (90, 7, 0),
-            altimeter: Some(29.77),
-        };
+        for (conditions, wind, dep_name, arr_name, dep_rwys, arr_rwys) in [
+            (
+                WeatherConditions::VFR,
+                (180, 1, 0),
+                "SOUTH CALM",
+                "SOUTH CALM",
+                vec!["17L", "25", "8"],
+                vec!["16L", "16R", "17R"],
+            ),
+            (
+                WeatherConditions::VFR,
+                (90, 7, 0),
+                "SOUTH CALM",
+                "SOUTH CALM",
+                vec!["17L", "25", "8"],
+                vec!["16L", "16R", "17R"],
+            ),
+            (
+                WeatherConditions::IFR,
+                (180, 1, 0),
+                "SOUTH CALM",
+                "SOUTH IMC",
+                vec!["17L", "25", "8"],
+                vec!["16R", "17L", "17R"],
+            ),
+            (
+                WeatherConditions::VFR,
+                (350, 10, 30),
+                "NORTH ALL",
+                "NORTH ALL (VMC)",
+                vec!["34L", "34R"],
+                vec!["34R", "35L", "35R"],
+            ),
+        ] {
+            let weather = weather("DEN", conditions, wind);
+            let flow = resolve(&config, "KDEN", Some(&weather), &[]);
+            let (dep, arr) = (flow.dep.unwrap(), flow.arr.unwrap());
+            assert_eq!((dep.name.as_str(), arr.name.as_str()), (dep_name, arr_name));
+            assert_eq!(sorted_rwy_names(&dep.rwys), dep_rwys);
+            assert_eq!(sorted_rwy_names(&arr.rwys), arr_rwys);
+            assert_eq!(dep.source, FlowSource::Weather);
+        }
+    }
 
-        let flow = procedure.determine_flow(&weather, &[]).unwrap();
-        assert_eq!(flow.dep_name.as_deref(), Some("SOUTH CALM"));
-        assert_eq!(flow.arr_name.as_deref(), Some("SOUTH CALM"));
-        assert_eq!(sorted_rwy_names(&flow.dep_rwys), vec!["17L", "25", "8"]);
-        assert_eq!(sorted_rwy_names(&flow.arr_rwys), vec!["16L", "16R", "17R"]);
+    /// Every airport has a rule for any wind and flight category, so the IDS
+    /// can always estimate a flow from the weather.
+    #[test]
+    fn rules_cover_all_weather() {
+        let config = load_config();
+        for (icao, procedure) in &config.0 {
+            let mut weather = weather(icao, WeatherConditions::VFR, (0, 0, 0));
+            for conditions in [
+                WeatherConditions::VFR,
+                WeatherConditions::MVFR,
+                WeatherConditions::IFR,
+                WeatherConditions::LIFR,
+            ] {
+                weather.conditions = conditions;
+                for kts in 0..100 {
+                    for dir in 0..360 {
+                        weather.wind = (dir, kts, 0);
+                        let matched = match procedure {
+                            AirportProcedure::Combined(proc) => {
+                                find_matching_rule(&proc.rules, &weather).is_some()
+                            }
+                            AirportProcedure::Split(proc) => {
+                                find_matching_split_rule(&proc.rules, &weather).is_some()
+                            }
+                        };
+                        assert!(matched, "{icao} has no rule for {weather:?}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
-    fn kden_weather_fallback_south_calm_imc() {
-        let config = load_config();
-        let procedure = config.0.get("KDEN").unwrap();
-        let weather = AirportWeather {
-            ceiling: 0,
-            conditions: WeatherConditions::IFR,
-            name: "DEN".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (180, 1, 0),
-            altimeter: None,
-        };
-
-        let flow = procedure.determine_flow(&weather, &[]).unwrap();
-        assert_eq!(flow.dep_name.as_deref(), Some("SOUTH CALM"));
-        assert_eq!(flow.arr_name.as_deref(), Some("SOUTH IMC"));
-        assert_eq!(sorted_rwy_names(&flow.dep_rwys), vec!["17L", "25", "8"]);
-        assert_eq!(sorted_rwy_names(&flow.arr_rwys), vec!["16R", "17L", "17R"]);
+    fn unknown_config_fields_are_rejected() {
+        let result = serde_json::from_value::<AirportProcedure>(serde_json::json!({
+            "type": "combined",
+            "flows": {},
+            "rules": [{ "conds": ["VFR"], "useFlow": "X", "directionBound": null }]
+        }));
+        assert!(result.unwrap_err().to_string().contains("directionBound"));
     }
 
     #[test]
-    fn kden_weather_fallback_north_all_vmc() {
-        let config = load_config();
-        let procedure = config.0.get("KDEN").unwrap();
-        let weather = AirportWeather {
-            ceiling: 0,
-            conditions: WeatherConditions::VFR,
-            name: "DEN".into(),
-            raw: "".into(),
-            visibility: 10,
-            wind: (350, 10, 30),
-            altimeter: None,
-        };
-
-        let flow = procedure.determine_flow(&weather, &[]).unwrap();
-        assert_eq!(flow.dep_name.as_deref(), Some("NORTH ALL"));
-        assert_eq!(flow.arr_name.as_deref(), Some("NORTH ALL (VMC)"));
-        assert_eq!(sorted_rwy_names(&flow.dep_rwys), vec!["34L", "34R"]);
-        assert_eq!(sorted_rwy_names(&flow.arr_rwys), vec!["34R", "35L", "35R"]);
+    fn atis_callsigns_match_vatis() {
+        assert_eq!(AtisType::Combined.callsign("KAPA"), "KAPA_ATIS");
+        assert_eq!(AtisType::Departure.callsign("KDEN"), "KDEN_D_ATIS");
+        assert_eq!(AtisType::Arrival.callsign("KDEN"), "KDEN_A_ATIS");
     }
 }

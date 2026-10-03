@@ -675,7 +675,11 @@
           "vmc": "SOUTH VMC",
           "imc": "SOUTH IMC"
         },
-        "SOUTH WEST": {
+        "SOUTH WEST (VMC)": {
+          "vmc": "SOUTH VMC",
+          "imc": "SOUTH IMC"
+        },
+        "SOUTH WEST (IMC)": {
           "vmc": "SOUTH VMC",
           "imc": "SOUTH IMC"
         },
@@ -964,7 +968,11 @@
           "vmc": "SOUTH VMC",
           "imc": "SOUTH IMC"
         },
-        "SOUTH WEST": {
+        "SOUTH WEST (VMC)": {
+          "vmc": "SOUTH VMC",
+          "imc": "SOUTH IMC"
+        },
+        "SOUTH WEST (IMC)": {
           "vmc": "SOUTH VMC",
           "imc": "SOUTH IMC"
         },
@@ -1011,36 +1019,36 @@
       {
         "conds": ["VFR", "MVFR"],
         "directionBounds": {
-          "windFrom": 80,
+          "windFrom": 260,
           "clockDir": "cw",
-          "windTo": 249
+          "windTo": 79
         },
         "useFlow": "NORTH VMC"
       },
       {
         "conds": ["IFR", "LIFR"],
         "directionBounds": {
-          "windFrom": 80,
+          "windFrom": 260,
           "clockDir": "cw",
-          "windTo": 249
+          "windTo": 79
         },
         "useFlow": "NORTH IMC"
       },
       {
         "conds": ["VFR", "MVFR"],
         "directionBounds": {
-          "windFrom": 250,
+          "windFrom": 80,
           "clockDir": "cw",
-          "windTo": 79
+          "windTo": 259
         },
         "useFlow": "SOUTH VMC"
       },
       {
         "conds": ["IFR", "LIFR"],
         "directionBounds": {
-          "windFrom": 250,
+          "windFrom": 80,
           "clockDir": "cw",
-          "windTo": 79
+          "windTo": 259
         },
         "useFlow": "SOUTH IMC"
       }

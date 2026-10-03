@@ -29,3 +29,11 @@ jobs:
 
       - name: Cargo Test
         run: cargo test --release
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: JS Tests
+        run: node --test vzdv-site/js-tests/ids_page.test.js
