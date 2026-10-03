@@ -261,7 +261,9 @@ pub async fn handler(
                             .title(db_event.name)
                             .url(format!("{}/events/{event_id}", config.hosted_domain));
                         if let Some(url) = db_event.image_url {
-                            embed = embed.image(ImageSource::url(urlencoding::encode(&url))?);
+                            // Escape spaces and other chars from url
+                            let parsed_url = url::Url::parse(&url)?.to_string();
+                            embed = embed.image(ImageSource::url(parsed_url)?);
                         }
                         if action == "action_overview" {
                             let formatted_description = if db_event
