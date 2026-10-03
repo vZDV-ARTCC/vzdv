@@ -4477,6 +4477,7 @@ dependencies = [
  "twilight-interactions",
  "twilight-model",
  "twilight-util",
+ "urlencoding",
  "vatsim_utils",
  "vzdv",
 ]
