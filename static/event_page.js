@@ -62,6 +62,12 @@ document.querySelectorAll(".btn-position-set").forEach((button) => {
   });
 });
 
+document
+  .getElementById("btn-cic-position-add")
+  ?.addEventListener("click", () => {
+    document.getElementById("modalAddCicPosition").showModal();
+  });
+
 document.querySelectorAll(".btn-cic-position-set").forEach((button) => {
   button.addEventListener("click", () => {
     document.getElementById("set-cic-position-id").value =
@@ -122,6 +128,14 @@ document
     e.preventDefault();
     document.getElementById("modalSetPosition").close();
     document.getElementById("set-position-id").value = "";
+  });
+
+document
+  .getElementById("btn-modal-add-cic-position-close")
+  ?.addEventListener("click", (e) => {
+    e.preventDefault();
+    document.getElementById("modalAddCicPosition").close();
+    document.getElementById("cic-category").value = "";
   });
 
 document
