@@ -19,7 +19,12 @@ use tower::ServiceBuilder;
 use tower_http::timeout::TimeoutLayer;
 use tower_sessions::{Expiry, SessionManagerLayer};
 use tower_sessions_sqlx_store::SqliteStore;
-use vzdv::{ControllerRating, general_setup, splits::SectorsConfig};
+use vzdv::{
+    ControllerRating,
+    config::{ConfigIDS, DEFAULT_IDS_CONFIG_FILE_NAME},
+    general_setup,
+    splits::SectorsConfig,
+};
 
 mod discord;
 mod endpoints;
@@ -27,6 +32,7 @@ mod flashed_messages;
 mod flights;
 mod middleware;
 mod shared;
+mod vatis_jwt;
 mod vatusa;
 
 /// vZDV website.
@@ -197,8 +203,7 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    let (config, db, ids_config) =
-        general_setup(cli.debug, "vzdv_site", cli.config, cli.ids_config).await;
+    let (config, db) = general_setup(cli.debug, "vzdv_site", cli.config).await;
     ERROR_WEBHOOK
         .set(config.discord.webhooks.errors.clone())
         .expect("Could not set global error webhook");
@@ -239,18 +244,36 @@ async fn main() {
         }
     };
 
+    debug!("Loading IDS configuration");
+    let ids_config_path = cli
+        .ids_config
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_IDS_CONFIG_FILE_NAME));
+    let ids_config = match ConfigIDS::load_from_disk(&ids_config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Could not load IDS config: {e}");
+            return;
+        }
+    };
+    if let Err(e) = ids_config.validate() {
+        error!("IDS config validation error: {e}");
+        return;
+    }
+
     debug!("Setting up app");
     let app_state = Arc::new(AppState {
         config,
         sectors_config,
         ids_config,
         ids_cache: endpoints::ids::IdsCache::default(),
+        vatis_keys: vatis_jwt::VatisKeys::default(),
         db: db.clone(),
         templates,
         cache: Cache::new(30),
     });
     let router = load_router(session_layer, &app_state);
     let ids_updates = tokio::spawn(endpoints::ids::refresh_snapshots(app_state.clone()));
+    let vatis_key_updates = tokio::spawn(vatis_jwt::refresh_keys(app_state.clone()));
     let app = router.with_state(app_state);
     let assets_dir = Path::new("./assets");
     if !assets_dir.exists() {
@@ -272,6 +295,8 @@ async fn main() {
         .await
         .expect("Could not serve the app");
     ids_updates.abort();
+    vatis_key_updates.abort();
     let _ = ids_updates.await;
+    let _ = vatis_key_updates.await;
     db.close().await;
 }

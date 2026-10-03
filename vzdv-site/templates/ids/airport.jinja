@@ -1,4 +1,5 @@
 {% extends "_layout.jinja" %}
+{% import "ids/_macros.jinja" as ids %}
 
 {% block title %}{{ detail.icao }} IDS | {{ super() }}{% endblock %}
 
@@ -6,12 +7,37 @@
 <style>#ids-page [hidden] { display: none !important; }</style>
 {% endblock %}
 
+{% macro gates(gate_list) -%}
+<span data-field="gates"{% if not gate_list %} class="text-muted"{% endif %}>{{ gate_list|join(' ') if gate_list else 'No gates assigned' }}</span>
+{%- endmacro %}
+
 {% macro departure_row(row) %}
 <tr data-key="{{ row.corridor or '' }}">
   <td data-field="direction" class="fw-bold text-center align-middle">{{ row.direction or '' }}</td>
   <td data-field="rwy" class="fw-bold text-center align-middle fs-5">{{ row.rwy or '' }}</td>
-  <td><span data-field="gates"{% if not row.gates %} class="text-muted"{% endif %}>{{ row.gates|join(' ') if row.gates else 'No gates assigned' }}</span></td>
+  <td>{{ gates(row.gates) }}</td>
 </tr>
+{% endmacro %}
+
+{% macro arrival_row(row) %}
+<tr data-key="{{ row.rwy or '' }}">
+  <td data-field="rwy" class="fw-bold text-center align-middle fs-5">{{ row.rwy or '' }}</td>
+  <td>{{ gates(row.gates) }}</td>
+</tr>
+{% endmacro %}
+
+{% macro atis_card(atis) %}
+<div class="card mb-3" data-key="{{ atis.atis_type or '' }}">
+  <div class="card-header d-flex justify-content-between">
+    <span><strong data-field="label">{{ atis.label or '' }}</strong> <span data-field="letter" class="badge text-bg-dark fs-6">{{ atis.letter or '' }}</span> <span data-field="preset" class="text-muted">{{ atis.preset or '' }}</span></span>
+    <span data-field="received" class="text-muted small">{% if atis.received %}Received {{ atis.received }} ({{ atis.age }}){% endif %}</span>
+  </div>
+  <div class="card-body">
+    <p data-field="airport_conditions"{% if not atis.airport_conditions %} hidden{% endif %}>{{ atis.airport_conditions or '' }}</p>
+    <p data-field="notams"{% if not atis.notams %} hidden{% endif %}>{{ atis.notams or '' }}</p>
+    <p data-field="text_atis" class="font-monospace small mb-0"{% if not atis.text_atis %} hidden{% endif %}>{{ atis.text_atis or '' }}</p>
+  </div>
+</div>
 {% endmacro %}
 
 {% block body %}
@@ -20,36 +46,78 @@
 <p><a href="/ids">&larr; Back to IDS</a></p>
 
 <div id="ids-page" data-mode="airport" data-url="/ids/{{ detail.icao }}/data" data-warning="{{ warning or '' }}">
-  <p id="ids-status" class="{% if warning %}text-warning{% else %}text-muted{% endif %}">Snapshot updated: <time id="ids-updated" datetime="{{ updated_at }}">{{ updated_at }}</time></p>
-  <p id="ids-warning" class="alert alert-warning" role="status"{% if not warning %} hidden{% endif %}>{% if warning %}{{ warning }} Displaying last available data; it may be stale.{% endif %}</p>
-  <div id="ids-error" class="alert alert-warning"{% if not detail.error %} hidden{% endif %}>{{ detail.error or '' }}</div>
-  <div id="ids-detail"{% if detail.error %} hidden{% endif %}>
-    <div id="ids-suggestion" class="mb-3"{% if not detail.suggested_flow %} hidden{% endif %}>
-      <span id="ids-suggested-flow" class="badge text-bg-info" data-bs-toggle="tooltip" data-bs-title="Determined based on current DEN SOP and winds">{% if detail.suggested_flow %}Suggested Flow: {{ detail.suggested_flow }}{% endif %}</span>
-    </div>
+  {{ ids.status(updated_at, updated_z, warning) }}
+  <div id="ids-issue" class="alert alert-warning"{% if not detail.issue %} hidden{% endif %}>{{ detail.issue or '' }}</div>
 
-    <div class="row g-4">
-      <div class="col-12 col-xl-6">
-        <h4>Departures <small id="ids-dep-flow" class="text-muted fs-6">{{ detail.dep_flow or "—" }}</small></h4>
-        <table id="ids-table" class="table table-bordered table-sm align-middle"{% if not detail.dep_rows %} hidden{% endif %}>
-          <thead class="table-dark">
-            <tr>
-              <th style="width: 6rem;">Direction</th>
-              <th style="width: 5rem;">Runway</th>
-              <th>Gates</th>
-            </tr>
-          </thead>
-          <tbody id="ids-rows">
-            {% for row in detail.dep_rows %}
-              {{ departure_row(row) }}
-            {% endfor %}
-          </tbody>
-        </table>
-        <p id="ids-empty" class="text-muted"{% if detail.dep_rows %} hidden{% endif %}>No departure runway data.</p>
-      </div>
+  <div class="row g-4 mb-3">
+    <div class="col-12 col-md-6">
+      <h4>Departures</h4>
+      <div class="fs-4"><span id="ids-dep-rwys">{{ detail.dep_rwys or "—" }}</span>{{ ids.source_badge(detail.dep_source, detail.match_icao, id="ids-dep-source") }}</div>
+      <div id="ids-dep-name" class="text-muted">{{ detail.dep_name or "—" }}</div>
+    </div>
+    <div class="col-12 col-md-6">
+      <h4>Arrivals</h4>
+      <div class="fs-4"><span id="ids-arr-rwys">{{ detail.arr_rwys or "—" }}</span>{{ ids.source_badge(detail.arr_source, detail.match_icao, id="ids-arr-source") }}</div>
+      <div id="ids-arr-name" class="text-muted">{{ detail.arr_name or "—" }}</div>
     </div>
   </div>
-  <template id="ids-row-template">{{ departure_row({}) }}</template>
+
+  <div id="ids-suggestion" class="mb-2"{% if not detail.suggestion %} hidden{% endif %}>
+    <span id="ids-suggested-flow" class="badge {% if detail.suggestion_differs %}text-bg-warning{% else %}text-bg-info{% endif %}" title="Determined from the SOP rules and current winds">{% if detail.suggestion %}Suggested: {{ detail.suggestion }}{% endif %}</span>
+  </div>
+  <p class="mb-1">{{ ids.conditions_badge(detail.conditions, id="ids-conditions") }} <span id="ids-weather">{{ [detail.wind, detail.altimeter]|select|join(" · ") or "No METAR" }}</span></p>
+  <p id="ids-metar" class="font-monospace small"{% if not detail.raw_metar %} hidden{% endif %}>{{ detail.raw_metar or '' }}</p>
+
+  {% if detail.is_split %}
+  <div class="row g-4 mb-3">
+    <div class="col-12 col-xl-6">
+      <h4>Departure Corridors</h4>
+      <table id="ids-dep-table" class="table table-bordered table-sm align-middle"{% if not detail.dep_rows %} hidden{% endif %}>
+        <thead class="table-dark">
+          <tr>
+            <th style="width: 6rem;">Direction</th>
+            <th style="width: 5rem;">Runway</th>
+            <th>Gates</th>
+          </tr>
+        </thead>
+        <tbody id="ids-dep-rows">
+          {% for row in detail.dep_rows %}
+            {{ departure_row(row) }}
+          {% endfor %}
+        </tbody>
+      </table>
+      <p id="ids-dep-empty" class="text-muted"{% if detail.dep_rows %} hidden{% endif %}>No departure runway data.</p>
+      <template id="ids-dep-template">{{ departure_row({}) }}</template>
+    </div>
+    <div class="col-12 col-xl-6">
+      <h4>Arrival Gates</h4>
+      <table id="ids-arr-table" class="table table-bordered table-sm align-middle"{% if not detail.arr_rows %} hidden{% endif %}>
+        <thead class="table-dark">
+          <tr>
+            <th style="width: 5rem;">Runway</th>
+            <th>Gates</th>
+          </tr>
+        </thead>
+        <tbody id="ids-arr-rows">
+          {% for row in detail.arr_rows %}
+            {{ arrival_row(row) }}
+          {% endfor %}
+        </tbody>
+      </table>
+      <p id="ids-arr-empty" class="text-muted"{% if detail.arr_rows %} hidden{% endif %}>No arrival runway data.</p>
+      <template id="ids-arr-template">{{ arrival_row({}) }}</template>
+    </div>
+  </div>
+  {% endif %}
+
+  <h4>ATIS</h4>
+  <div id="ids-atis-rows">
+    {% for atis in detail.atis %}
+      {{ atis_card(atis) }}
+    {% endfor %}
+  </div>
+  <p id="ids-atis-empty" class="text-muted"{% if detail.atis %} hidden{% endif %}>No ATIS online.</p>
+  <template id="ids-atis-template">{{ atis_card({}) }}</template>
 </div>
 
 <script src="/static/ids_page.js" defer></script>

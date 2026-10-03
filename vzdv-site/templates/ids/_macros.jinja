@@ -1,0 +1,26 @@
+{# Shared markup for the IDS pages; static/ids_page.js renders the same classes and text. #}
+
+{% macro source_badge(source, match_icao, field="", id="") %}
+{%- set badges = {
+  "atis": ["ATIS", "badge text-bg-success ms-1", "From the online ATIS"],
+  "matched": ["MATCH", "badge text-bg-info ms-1", "Matched to " ~ match_icao ~ "'s flow"],
+  "weather": ["EST", "badge text-bg-secondary ms-1", "Estimated from the current wind and SOP rules"],
+} -%}
+{%- set badge = badges[source] if source in badges else none -%}
+<span{% if field %} data-field="{{ field }}"{% endif %}{% if id %} id="{{ id }}"{% endif %} class="{{ badge[1] if badge else 'badge ms-1' }}" title="{{ badge[2] if badge else '' }}"{% if not badge %} hidden{% endif %}>{{ badge[0] if badge else '' }}</span>
+{%- endmacro %}
+
+{% macro conditions_badge(conditions, field="", id="") %}
+{%- set classes = {
+  "VFR": "badge rounded-pill text-bg-success",
+  "MVFR": "badge rounded-pill text-bg-info",
+  "IFR": "badge rounded-pill text-bg-danger",
+  "LIFR": "badge rounded-pill",
+} -%}
+<span{% if field %} data-field="{{ field }}"{% endif %}{% if id %} id="{{ id }}"{% endif %} class="{{ classes[conditions] if conditions in classes else 'text-muted' }}"{% if conditions == 'LIFR' %} style="background-color: purple;"{% endif %}>{{ conditions if conditions in classes else '—' }}</span>
+{%- endmacro %}
+
+{% macro status(updated_at, updated_z, warning) %}
+<p id="ids-status" class="{% if warning %}text-warning{% else %}text-muted{% endif %}">Snapshot updated: <time id="ids-updated" datetime="{{ updated_at }}">{{ updated_z }}</time></p>
+<p id="ids-warning" class="alert alert-warning" role="status"{% if not warning %} hidden{% endif %}>{% if warning %}{{ warning }} Displaying last available data; it may be stale.{% endif %}</p>
+{% endmacro %}

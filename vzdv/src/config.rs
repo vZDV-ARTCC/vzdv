@@ -22,6 +22,8 @@ pub struct Config {
     pub discord: ConfigDiscord,
     pub email: ConfigEmail,
     pub airspace_maps: ConfigAirspaceMaps,
+    #[serde(default)]
+    pub ids: ConfigIdsOptions,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -167,6 +169,27 @@ pub struct ConfigAirspaceMaps {
     pub carto_key: String,
 }
 
+/// Site-side IDS options from the main config file. The airport procedures
+/// themselves live in the IDS config file; see [`ConfigIDS`].
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ConfigIdsOptions {
+    #[serde(default)]
+    pub vatis_jwt: VatisJwtMode,
+}
+
+/// How strictly to check the JWT that vATIS attaches to IDS updates.
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum VatisJwtMode {
+    /// Don't check tokens.
+    Off,
+    /// Check tokens and log failures, but still accept the update.
+    #[default]
+    Log,
+    /// Reject updates without a valid token.
+    Enforce,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ConfigIDS(pub HashMap<String, AirportProcedure>);
 
@@ -221,6 +244,21 @@ impl ConfigIDS {
                             )
                         }
                         for (reference_flow, flows) in &try_match.match_flows {
+                            let reference_has_flow = match reference {
+                                AirportProcedure::Combined(reference) => {
+                                    reference.flows.contains_key(reference_flow)
+                                }
+                                AirportProcedure::Split(reference) => {
+                                    reference.dep_flows.contains_key(reference_flow)
+                                }
+                            };
+                            if !reference_has_flow {
+                                bail!(
+                                    "tryMatch in {icao} maps {}'s flow '{reference_flow}', which {} does not have",
+                                    try_match.icao,
+                                    try_match.icao
+                                )
+                            }
                             for flow in [&flows.vmc, &flows.imc] {
                                 if !proc.flows.contains_key(flow) {
                                     bail!(
@@ -232,6 +270,19 @@ impl ConfigIDS {
                     }
                 }
                 AirportProcedure::Split(proc) => {
+                    // Check that every departure flow only uses defined corridors
+                    for (flow_name, flow) in &proc.dep_flows {
+                        if let Some(corridor) = flow
+                            .rwys
+                            .values()
+                            .flatten()
+                            .find(|corridor| !proc.dep_corridors.contains_key(*corridor))
+                        {
+                            bail!(
+                                "Dep flow '{flow_name}' in {icao} uses corridor '{corridor}' not present in depCorridors"
+                            )
+                        }
+                    }
                     // Check that every rule references valid dep and arr flows
                     for rule in &proc.rules {
                         if !proc.dep_flows.contains_key(&rule.use_dep_flow) {
@@ -249,6 +300,18 @@ impl ConfigIDS {
                     }
                 }
             }
+            for (direction_bounds, speed_bounds) in entry.rule_bounds() {
+                if let Some(bounds) = direction_bounds
+                    && (bounds.wind_from > 360 || bounds.wind_to > 360)
+                {
+                    bail!("Rule in {icao} has a wind direction over 360: {bounds:?}")
+                }
+                if let Some(bounds) = speed_bounds
+                    && bounds.min_kts > bounds.max_kts
+                {
+                    bail!("Rule in {icao} has minKts above maxKts: {bounds:?}")
+                }
+            }
         }
 
         Ok(())
@@ -264,5 +327,72 @@ impl Config {
         let text = fs::read_to_string(path)?;
         let config: Config = toml::from_str(&text)?;
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ConfigIDS;
+
+    fn config(value: serde_json::Value) -> ConfigIDS {
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn shipped_ids_config_is_valid() {
+        let text = std::fs::read_to_string("../ids.json").unwrap();
+        let config: ConfigIDS = serde_json::from_str(&text).unwrap();
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn rejects_unknown_departure_corridor() {
+        let config = config(serde_json::json!({
+            "KDEN": {
+                "type": "split",
+                "depCorridors": { "N": { "direction": "NORTH", "gates": [] } },
+                "depFlows": { "NORTH": { "rwys": { "34L": ["N", "E"] } } },
+                "arrFlows": {},
+                "rules": []
+            }
+        }));
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("corridor 'E'"), "{err}");
+    }
+
+    #[test]
+    fn rejects_try_match_of_missing_reference_flow() {
+        let config = config(serde_json::json!({
+            "KDEN": {
+                "type": "split",
+                "depCorridors": {},
+                "depFlows": { "NORTH": { "rwys": {} } },
+                "arrFlows": {},
+                "rules": []
+            },
+            "KAPA": {
+                "type": "combined",
+                "flows": { "N": { "name": "N", "depRwys": [], "arrRwys": [] } },
+                "rules": [],
+                "tryMatch": {
+                    "icao": "KDEN",
+                    "matchFlows": { "SOUTH": { "vmc": "N", "imc": "N" } }
+                }
+            }
+        }));
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("'SOUTH'"), "{err}");
+    }
+
+    #[test]
+    fn rejects_inverted_speed_bounds() {
+        let config = config(serde_json::json!({
+            "KAPA": {
+                "type": "combined",
+                "flows": { "N": { "name": "N", "depRwys": [], "arrRwys": [] } },
+                "rules": [{ "conds": ["VFR"], "useFlow": "N", "speedBounds": { "minKts": 10, "maxKts": 5 } }]
+            }
+        }));
+        assert!(config.validate().is_err());
     }
 }

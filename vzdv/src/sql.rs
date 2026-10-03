@@ -1,3 +1,4 @@
+use crate::ids::AtisType;
 use serde::{Deserialize, Serialize};
 use sqlx::{
     prelude::FromRow,
@@ -198,10 +199,9 @@ pub struct SopAccess {
     pub created_date: DateTime<Utc>,
 }
 
-/// Data incoming from vATIS.
-#[derive(Debug, Deserialize, Serialize, FromRow, Clone)]
+/// The latest update from a vATIS station, one row per facility and ATIS type.
+#[derive(Debug, Serialize, FromRow, Clone)]
 pub struct Atis {
-    // field not present when getting data from vATIS, but present with the DB
     #[serde(skip)]
     pub id: u32,
     pub facility: String,
@@ -209,12 +209,15 @@ pub struct Atis {
     #[serde(rename = "atisLetter")]
     pub atis_letter: String,
     #[serde(rename = "atisType")]
-    pub atis_type: String,
+    pub atis_type: AtisType,
     #[serde(rename = "airportConditions")]
     pub airport_conditions: String,
     pub notams: String,
+    /// When the site received the update (not the vATIS client's clock).
     pub timestamp: DateTime<Utc>,
     pub version: String,
+    #[serde(rename = "textAtis")]
+    pub text_atis: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, FromRow, Clone)]
@@ -446,8 +449,10 @@ CREATE TABLE atis (
     airport_conditions TEXT NOT NULL,
     notams TEXT NOT NULL,
     timestamp TEXT NOT NULL,
-    version TEXT NOT NULL
+    version TEXT NOT NULL,
+    text_atis TEXT NOT NULL DEFAULT ''
 ) STRICT;
+CREATE UNIQUE INDEX atis_facility_type ON atis (facility, atis_type);
 
 CREATE TABLE auxiliary_training_data (
   id INTEGER PRIMARY KEY NOT NULL,
@@ -698,8 +703,20 @@ WHERE
 pub const DELETE_KVS_ENTRY: &str = "DELETE FROM kvs WHERE key=$1";
 
 pub const GET_ALL_ATIS_ENTRIES: &str = "SELECT * FROM atis";
-pub const INSERT_ATIS_ENTRY: &str =
-    "INSERT INTO atis VALUES (NULL, $1, $2, $3, $4, $5, $6, $7, $8)";
+pub const UPSERT_ATIS_ENTRY: &str = "
+INSERT INTO atis
+    (facility, preset, atis_letter, atis_type, airport_conditions, notams, timestamp, version, text_atis)
+VALUES
+    ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+ON CONFLICT(facility, atis_type) DO UPDATE SET
+    preset=excluded.preset,
+    atis_letter=excluded.atis_letter,
+    airport_conditions=excluded.airport_conditions,
+    notams=excluded.notams,
+    timestamp=excluded.timestamp,
+    version=excluded.version,
+    text_atis=excluded.text_atis";
+pub const DELETE_ATIS_FOR: &str = "DELETE FROM atis WHERE facility=$1 AND atis_type=$2";
 pub const DELETE_ATIS_ENTRY: &str = "DELETE FROM atis WHERE id=$1";
 
 pub const GET_AUX_TRAINING_DATA_FOR: &str = "SELECT * FROM auxiliary_training_data WHERE cid=$1";

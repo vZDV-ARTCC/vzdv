@@ -1,6 +1,6 @@
 //! App middleware functions.
 
-use crate::shared::{AppError, AppState, SESSION_USER_INFO_KEY, UserInfo, refresh_roster_status};
+use crate::shared::{AppState, SESSION_USER_INFO_KEY, UserInfo, refresh_roster_status};
 use axum::{
     extract::{Request, State},
     middleware::Next,
@@ -106,10 +106,13 @@ pub async fn extend_session(
     session: Session,
     request: Request,
     next: Next,
-) -> Result<Response, AppError> {
+) -> Response {
     session.set_expiry(Some(Expiry::OnInactivity(time::Duration::hours(
         SESSION_INACTIVITY_WINDOW,
     ))));
-    refresh_roster_status(&state.db, &session).await?;
-    Ok(next.run(request).await)
+    // a failure here shouldn't take down every page
+    if let Err(e) = refresh_roster_status(&state.db, &session).await {
+        error!("Could not refresh roster status: {e}");
+    }
+    next.run(request).await
 }

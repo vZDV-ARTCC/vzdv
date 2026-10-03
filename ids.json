@@ -675,7 +675,11 @@
           "vmc": "SOUTH VMC",
           "imc": "SOUTH IMC"
         },
-        "SOUTH WEST": {
+        "SOUTH WEST (VMC)": {
+          "vmc": "SOUTH VMC",
+          "imc": "SOUTH IMC"
+        },
+        "SOUTH WEST (IMC)": {
           "vmc": "SOUTH VMC",
           "imc": "SOUTH IMC"
         },
@@ -964,7 +968,11 @@
           "vmc": "SOUTH VMC",
           "imc": "SOUTH IMC"
         },
-        "SOUTH WEST": {
+        "SOUTH WEST (VMC)": {
+          "vmc": "SOUTH VMC",
+          "imc": "SOUTH IMC"
+        },
+        "SOUTH WEST (IMC)": {
           "vmc": "SOUTH VMC",
           "imc": "SOUTH IMC"
         },

@@ -188,6 +188,8 @@ pub struct AppState {
     /// IDS config
     pub ids_config: ConfigIDS,
     pub ids_cache: crate::endpoints::ids::IdsCache,
+    /// Keys for checking vATIS IDS update tokens
+    pub vatis_keys: crate::vatis_jwt::VatisKeys,
     /// Access to the DB
     pub db: SqlitePool,
     /// Loaded templates
@@ -209,6 +211,8 @@ pub struct UserInfo {
     pub last_name: String,
 
     pub is_home: bool,
+    /// Sessions from before this field existed won't have it.
+    #[serde(default)]
     pub on_roster: bool,
 
     pub is_some_staff: bool,
@@ -433,6 +437,7 @@ pub async fn remove_controller_from_roster(
     Ok(())
 }
 
+/// METARs for the weather page and IDS airports, cached for 5 minutes.
 pub async fn get_all_weather(state: &AppState) -> Result<Vec<AirportWeather>> {
     let cache_key = "METAR_FULL".to_string();
 
@@ -444,6 +449,12 @@ pub async fn get_all_weather(state: &AppState) -> Result<Vec<AirportWeather>> {
         state.cache.invalidate(&cache_key);
     }
 
+    // IDS airports are keyed by ICAO; the weather list uses FAA identifiers
+    let ids_airports = state
+        .ids_config
+        .0
+        .keys()
+        .map(|icao| icao.strip_prefix('K').unwrap_or(icao).to_string());
     let resp = GENERAL_HTTP_CLIENT
         .get(format!(
             "https://metar.vatsim.net/{}",
@@ -452,6 +463,9 @@ pub async fn get_all_weather(state: &AppState) -> Result<Vec<AirportWeather>> {
                 .weather
                 .all
                 .iter()
+                .cloned()
+                .chain(ids_airports)
+                .unique()
                 .map(|s| format!("K{s}"))
                 .sorted()
                 .join(",")

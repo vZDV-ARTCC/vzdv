@@ -5,6 +5,9 @@ build:
   cargo +nightly clippy
   cargo t
 
+test-js:
+  node --test vzdv-site/js-tests/ids_page.test.js
+
 build-release:
   cargo b --release --all-features
 

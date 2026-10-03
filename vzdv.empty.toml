@@ -101,3 +101,8 @@ user = ""
 password = ""
 from = ""
 reply_to = ""
+
+[ids]
+# How to treat the JWT vATIS attaches to IDS updates: "off", "log" (accept but
+# log failures), or "enforce" (reject updates without a valid token).
+vatis_jwt = "log"

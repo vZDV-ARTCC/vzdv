@@ -2,69 +2,150 @@
 
 use crate::{
     flashed_messages,
-    shared::{AppError, AppState, SESSION_USER_INFO_KEY, UserInfo},
+    shared::{AppError, AppState, CacheEntry, SESSION_USER_INFO_KEY, UserInfo},
+    vatis_jwt::Verdict,
 };
 use axum::{
     Router,
-    extract::{Json as JsonE, Path, State},
+    extract::{DefaultBodyLimit, Json as JsonE, Path, State},
+    http::HeaderMap,
     response::{Html, IntoResponse, Json as JsonR, Redirect, Response},
     routing::{get, post},
 };
-use chrono::{DateTime, Utc};
-use log::{debug, error};
+use chrono::{DateTime, TimeDelta, Utc};
+use itertools::Itertools;
+use log::{debug, error, warn};
 use minijinja::context;
 use reqwest::StatusCode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    collections::HashMap,
-    sync::Arc,
+    collections::{HashMap, HashSet},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify, RwLock};
 use tower_sessions::Session;
-use vzdv::aviation::{AirportWeather, WeatherConditions};
-use vzdv::ids::{AirportProcedure, DepCorridor, ResolvedFlow, sorted_rwy_names};
-use vzdv::sql::{self, Atis};
+use vatsim_utils::live_api::Vatsim;
+use vzdv::{
+    aviation::AirportWeather,
+    config::{ConfigIDS, VatisJwtMode},
+    ids::{AirportProcedure, AtisType, DepCorridor, FlowSide, FlowSource, ResolvedFlow},
+    sql::{self, Atis},
+};
+
+/// Longest accepted text field in a vATIS update.
+const MAX_ATIS_TEXT: usize = 8 * 1024;
+/// How long a fresh vATIS update counts as online before the VATSIM feed lists the station.
+const ATIS_GRACE: TimeDelta = TimeDelta::minutes(5);
+const ONLINE_ATIS_CACHE_KEY: &str = "VATSIM_ATIS_ONLINE";
+
+/// An IDS update POSTed by vATIS. Its client-side timestamp is ignored.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VatisUpdate {
+    facility: String,
+    #[serde(default)]
+    preset: String,
+    #[serde(default)]
+    atis_letter: String,
+    atis_type: AtisType,
+    airport_conditions: Option<String>,
+    notams: Option<String>,
+    text_atis: Option<String>,
+    version: Option<String>,
+}
+
+impl VatisUpdate {
+    /// vATIS sends an update with no letter or preset when the station disconnects.
+    fn is_disconnect(&self) -> bool {
+        self.atis_letter.is_empty() && self.preset.is_empty()
+    }
+
+    fn problem(&self) -> Option<&'static str> {
+        let mut letter = self.atis_letter.chars();
+        if !matches!((letter.next(), letter.next()), (Some('A'..='Z'), None)) {
+            return Some("ATIS letter must be a single letter");
+        }
+        if self.preset.is_empty() || self.preset.len() > 100 {
+            return Some("preset must be 1-100 characters");
+        }
+        let too_long = [&self.airport_conditions, &self.notams, &self.text_atis]
+            .iter()
+            .any(|text| text.as_ref().is_some_and(|t| t.len() > MAX_ATIS_TEXT));
+        too_long.then_some("ATIS text is too long")
+    }
+}
+
+/// Check vATIS's token according to the configured mode, returning the status
+/// to respond with if the update is rejected.
+async fn check_vatis_token(
+    state: &AppState,
+    headers: &HeaderMap,
+    facility: &str,
+) -> Option<StatusCode> {
+    let mode = state.config.ids.vatis_jwt;
+    if mode == VatisJwtMode::Off {
+        return None;
+    }
+    let verdict = state.vatis_keys.verify(headers).await;
+    if verdict == Verdict::Valid {
+        return None;
+    }
+    if mode == VatisJwtMode::Enforce {
+        warn!("Rejected vATIS update for {facility}: {verdict:?}");
+        return Some(StatusCode::UNAUTHORIZED);
+    }
+    warn!("Accepting vATIS update for {facility} despite failed token check: {verdict:?}");
+    None
+}
 
 /// Receive HTTP POST events from vATIS being ran by facility controllers.
 ///
-/// Note that there doesn't seem to be a way to _authenticate_ that the data
-/// is actually coming from vATIS ....
+/// Each station's latest update replaces its previous one.
 async fn receive_vatis_post(
     State(state): State<Arc<AppState>>,
-    JsonE(payload): JsonE<Atis>,
+    headers: HeaderMap,
+    JsonE(update): JsonE<VatisUpdate>,
 ) -> Result<StatusCode, AppError> {
-    let existing: Vec<Atis> = sqlx::query_as(sql::GET_ALL_ATIS_ENTRIES)
-        .fetch_all(&state.db)
-        .await?;
-    let matching: Vec<_> = existing
-        .iter()
-        .filter(|entry| entry.facility == payload.facility && entry.atis_type == payload.atis_type)
-        .map(|entry| entry.id)
-        .collect();
-    // can't use `.for_each` because of async
-    for index in matching {
-        if let Err(e) = sqlx::query(sql::DELETE_ATIS_ENTRY)
-            .bind(index)
-            .execute(&state.db)
-            .await
-        {
-            error!("Could not delete matching ATIS {index}: {e}");
-        }
+    if let Some(status) = check_vatis_token(&state, &headers, &update.facility).await {
+        return Ok(status);
     }
-    sqlx::query(sql::INSERT_ATIS_ENTRY)
-        .bind(&payload.facility)
-        .bind(&payload.preset)
-        .bind(&payload.atis_letter)
-        .bind(&payload.atis_type)
-        .bind(&payload.airport_conditions)
-        .bind(&payload.notams)
-        .bind(payload.timestamp)
-        .bind(&payload.version)
-        .execute(&state.db)
-        .await?;
-    debug!("New ATIS data stored");
+    let facility = update.facility.to_uppercase();
+    if !state.ids_config.0.contains_key(&facility) {
+        debug!("Ignoring vATIS update for unconfigured facility {facility}");
+        return Ok(StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    if update.is_disconnect() {
+        sqlx::query(sql::DELETE_ATIS_FOR)
+            .bind(&facility)
+            .bind(update.atis_type)
+            .execute(&state.db)
+            .await?;
+        debug!("{facility} {:?} ATIS disconnected", update.atis_type);
+    } else {
+        if let Some(problem) = update.problem() {
+            warn!("Rejected vATIS update for {facility}: {problem}");
+            return Ok(StatusCode::UNPROCESSABLE_ENTITY);
+        }
+        sqlx::query(sql::UPSERT_ATIS_ENTRY)
+            .bind(&facility)
+            .bind(&update.preset)
+            .bind(&update.atis_letter)
+            .bind(update.atis_type)
+            .bind(update.airport_conditions.unwrap_or_default())
+            .bind(update.notams.unwrap_or_default())
+            .bind(Utc::now())
+            .bind(update.version.unwrap_or_default())
+            .bind(update.text_atis.unwrap_or_default())
+            .execute(&state.db)
+            .await?;
+        debug!("New ATIS data stored for {facility}");
+    }
+    state.ids_cache.invalidate();
     Ok(StatusCode::OK)
 }
 
@@ -82,150 +163,127 @@ async fn show_atis_data(
     Ok(JsonR(data).into_response())
 }
 
-/// A single row in the IDS display table.
+/// Callsigns of ATISes online on VATSIM, cached for a minute. `None` if the
+/// feed is unavailable.
+async fn online_atis_callsigns(state: &AppState) -> Option<HashSet<String>> {
+    let cache_key = ONLINE_ATIS_CACHE_KEY.to_string();
+    if let Some(cached) = state.cache.get(&cache_key)
+        && cached.inserted.elapsed() < Duration::from_secs(60)
+    {
+        return serde_json::from_str(&cached.data).ok();
+    }
+    let fetch = async { anyhow::Ok(Vatsim::new().await?.get_v3_data().await?) };
+    let data = match tokio::time::timeout(Duration::from_secs(10), fetch).await {
+        Ok(Ok(data)) => data,
+        Ok(Err(e)) => {
+            warn!("Could not check online ATISes: {e}");
+            return None;
+        }
+        Err(_) => {
+            warn!("Timed out checking online ATISes");
+            return None;
+        }
+    };
+    let callsigns: HashSet<String> = data.atis.into_iter().map(|atis| atis.callsign).collect();
+    if let Ok(json) = serde_json::to_string(&callsigns) {
+        state.cache.insert(cache_key, CacheEntry::new(json));
+    }
+    Some(callsigns)
+}
+
+/// Drop ATISes whose station isn't on VATSIM, e.g. when vATIS crashed
+/// without sending its disconnect update.
+fn live_atis(atis: Vec<Atis>, online: Option<&HashSet<String>>, now: DateTime<Utc>) -> Vec<Atis> {
+    let Some(online) = online else {
+        return atis;
+    };
+    atis.into_iter()
+        .filter(|a| {
+            online.contains(&a.atis_type.callsign(&a.facility)) || now - a.timestamp < ATIS_GRACE
+        })
+        .collect()
+}
+
+/// An airport's runways and flow names for display.
 #[derive(Debug, Clone, Serialize)]
-struct IdsRow {
-    icao: String,
+struct FlowSummary {
     dep_rwys: String,
     arr_rwys: String,
-    /// For combined airports, the single flow name.
-    flow_name: Option<String>,
-    /// For split airports, the departure ATIS preset.
     dep_name: Option<String>,
-    /// For split airports, the arrival ATIS preset.
     arr_name: Option<String>,
-    is_split: bool,
-    atis_info: String,
+    dep_source: Option<FlowSource>,
+    arr_source: Option<FlowSource>,
+    /// Airport this one's flow was matched to (`tryMatch`).
+    match_icao: Option<String>,
+}
+
+impl FlowSummary {
+    fn new(procedure: &AirportProcedure, flow: &ResolvedFlow) -> Self {
+        let rwys = |side: &Option<FlowSide>| {
+            side.as_ref()
+                .map(|side| vzdv::ids::sorted_rwy_names(&side.rwys).join(", "))
+                .unwrap_or_default()
+        };
+        let matched = [&flow.dep, &flow.arr].iter().any(|side| {
+            side.as_ref()
+                .is_some_and(|s| s.source == FlowSource::Matched)
+        });
+        Self {
+            dep_rwys: rwys(&flow.dep),
+            arr_rwys: rwys(&flow.arr),
+            dep_name: flow.dep_name().map(String::from),
+            arr_name: flow.arr_name().map(String::from),
+            dep_source: flow.dep.as_ref().map(|side| side.source),
+            arr_source: flow.arr.as_ref().map(|side| side.source),
+            match_icao: procedure
+                .try_match_icao()
+                .filter(|_| matched)
+                .map(String::from),
+        }
+    }
+}
+
+/// An airport's current weather for display.
+#[derive(Debug, Clone, Serialize, Default)]
+struct WeatherSummary {
     conditions: Option<String>,
     wind: Option<String>,
     altimeter: Option<String>,
     raw_metar: Option<String>,
-    error: Option<String>,
 }
 
-/// Build a weather map keyed by ICAO (e.g., "KDEN").
-fn weather_by_icao(weather: &[AirportWeather]) -> HashMap<String, &AirportWeather> {
-    weather
-        .iter()
-        .map(|w| (format!("K{}", w.name), w))
-        .collect()
-}
-
-/// Determine if a flow can be resolved for this airport without weather data.
-fn can_determine_without_weather(
-    procedure: &AirportProcedure,
-    atis_list: &[Atis],
-    icao: &str,
-) -> bool {
-    let airport_atis: Vec<_> = atis_list.iter().filter(|a| a.facility == icao).collect();
-    match procedure {
-        AirportProcedure::Combined(_) => airport_atis.iter().any(|a| a.atis_type == "combined"),
-        AirportProcedure::Split(_) => {
-            airport_atis.iter().any(|a| a.atis_type == "departure")
-                && airport_atis.iter().any(|a| a.atis_type == "arrival")
-        }
-    }
-}
-
-/// Build a fallback weather struct when no METAR is available but ATIS is sufficient.
-fn fallback_weather(icao: &str) -> AirportWeather {
-    AirportWeather {
-        ceiling: 3456,
-        conditions: WeatherConditions::VFR,
-        name: icao.strip_prefix('K').unwrap_or(icao).to_string(),
-        raw: "No METAR available".to_string(),
-        visibility: 10,
-        wind: (0, 0, 0),
-        altimeter: None,
-    }
-}
-
-/// Build a formatted wind string from an `AirportWeather`.
-fn format_wind(weather: &AirportWeather) -> String {
-    let (dir, mag, gust) = weather.wind;
-    if gust > 0 {
-        format!("{:03}@{mag}G{gust}", dir)
-    } else {
-        format!("{:03}@{mag}", dir)
-    }
-}
-
-/// Construct a single row for the IDS table.
-fn build_ids_row(
-    icao: &str,
-    procedure: &AirportProcedure,
-    weather: Option<&AirportWeather>,
-    atis_list: &[Atis],
-    current_flows: &HashMap<String, ResolvedFlow>,
-) -> IdsRow {
-    let airport_atis: Vec<&Atis> = atis_list.iter().filter(|a| a.facility == icao).collect();
-
-    let atis_info = if airport_atis.is_empty() {
-        "No ATIS".to_string()
-    } else {
-        airport_atis
-            .iter()
-            .map(|a| format!("{} {}", a.atis_type.to_uppercase(), a.atis_letter))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-
-    let conditions = weather.map(|w| format!("{:?}", w.conditions));
-    let wind = weather.map(format_wind);
-    let altimeter = weather.and_then(|w| w.altimeter).map(|a| format!("{a:.2}"));
-    let raw_metar = weather.map(|w| w.raw.clone());
-
-    let is_split = matches!(procedure, AirportProcedure::Split(_));
-
-    let (resolved, error) = match weather {
-        Some(w) => (
-            procedure
-                .determine_flow_with_matches(w, atis_list, current_flows)
-                .ok(),
-            None,
-        ),
-        None => {
-            if can_determine_without_weather(procedure, atis_list, icao) {
-                let fallback = fallback_weather(icao);
-                (
-                    procedure
-                        .determine_flow_with_matches(&fallback, atis_list, current_flows)
-                        .ok(),
-                    None,
-                )
+impl WeatherSummary {
+    fn new(weather: Option<&AirportWeather>) -> Self {
+        let Some(weather) = weather else {
+            return Self::default();
+        };
+        let (dir, mag, gust) = weather.wind;
+        Self {
+            conditions: Some(format!("{:?}", weather.conditions)),
+            wind: Some(if gust > 0 {
+                format!("{dir:03}@{mag}G{gust}")
             } else {
-                (None, Some("No METAR or complete ATIS data".to_string()))
-            }
+                format!("{dir:03}@{mag}")
+            }),
+            altimeter: weather.altimeter.map(|a| format!("{a:.2}")),
+            raw_metar: Some(weather.raw.clone()),
         }
-    };
-
-    let mut row = IdsRow {
-        icao: icao.to_string(),
-        dep_rwys: String::new(),
-        arr_rwys: String::new(),
-        flow_name: None,
-        dep_name: None,
-        arr_name: None,
-        is_split,
-        atis_info,
-        conditions,
-        wind,
-        altimeter,
-        raw_metar,
-        error,
-    };
-
-    if let Some(flow) = resolved {
-        row.dep_rwys = sorted_rwy_names(&flow.dep_rwys).join(", ");
-        row.arr_rwys = sorted_rwy_names(&flow.arr_rwys).join(", ");
-        row.flow_name = flow.dep_name.clone();
-        row.dep_name = flow.dep_name;
-        row.arr_name = flow.arr_name;
-    } else if row.error.is_none() {
-        row.error = Some("Could not determine flow".to_string());
     }
+}
 
-    row
+/// A single row in the IDS overview table.
+#[derive(Debug, Clone, Serialize)]
+struct IdsRow {
+    icao: String,
+    is_split: bool,
+    #[serde(flatten)]
+    flow: FlowSummary,
+    #[serde(flatten)]
+    weather: WeatherSummary,
+    /// Weather-based flow, when it differs from an ATIS-selected one.
+    suggestion: Option<String>,
+    atis_info: String,
+    issue: Option<String>,
 }
 
 /// A single row in the departure detail table.
@@ -243,124 +301,216 @@ struct DepRow {
 /// A single row in the arrival detail table.
 #[derive(Debug, Clone, Serialize)]
 struct ArrRow {
-    /// Runway name to display in the first cell (empty string for continuation rows).
-    rwy_label: String,
-    /// Number of rows this runway spans.
-    rwy_rowspan: usize,
-    /// Gate names assigned to this runway.
+    rwy: String,
+    /// Arrival gates assigned to this runway.
     gates: Vec<String>,
+}
+
+/// One online ATIS on the detail page.
+#[derive(Debug, Clone, Serialize)]
+struct AtisDetail {
+    atis_type: AtisType,
+    label: &'static str,
+    letter: String,
+    preset: String,
+    /// Zulu time the update was received.
+    received: String,
+    age: String,
+    airport_conditions: String,
+    notams: String,
+    text_atis: String,
 }
 
 /// Per-airport detail data passed to the template.
 #[derive(Debug, Clone, Serialize)]
 struct AirportDetail {
     icao: String,
-    dep_flow: Option<String>,
-    arr_flow: Option<String>,
-    suggested_flow: Option<String>,
+    is_split: bool,
+    #[serde(flatten)]
+    flow: FlowSummary,
+    #[serde(flatten)]
+    weather: WeatherSummary,
+    /// Weather-based flow.
+    suggestion: Option<String>,
+    /// Whether the suggestion differs from an ATIS-selected flow.
+    suggestion_differs: bool,
+    issue: Option<String>,
     dep_rows: Vec<DepRow>,
     arr_rows: Vec<ArrRow>,
-    error: Option<String>,
+    atis: Vec<AtisDetail>,
 }
 
-/// Build the departure rows by resolving each corridor name against the airport's
-/// `dep_corridors` definition.
-fn build_dep_rows(
-    dep_rwys: &HashMap<String, Vec<String>>,
-    dep_corridors: &HashMap<String, DepCorridor>,
-) -> anyhow::Result<Vec<DepRow>> {
-    let mut rows = Vec::new();
-    for (rwy, corridors) in dep_rwys {
-        for corridor in corridors {
-            let Some(info) = dep_corridors.get(corridor) else {
-                anyhow::bail!("Could not determine departure corridor for corridor {corridor}");
-            };
-            rows.push(DepRow {
+fn zulu(time: DateTime<Utc>) -> String {
+    time.format("%H%MZ").to_string()
+}
+
+fn age(since: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    match (now - since).num_minutes().max(0) {
+        0 => "just now".to_string(),
+        minutes @ 1..=59 => format!("{minutes} min ago"),
+        minutes => format!("{}h {:02}m ago", minutes / 60, minutes % 60),
+    }
+}
+
+/// Describe a flow, e.g. "SOUTH VMC" or "D SOUTH EAST / A SOUTH EAST".
+fn describe(flow: &ResolvedFlow, is_split: bool) -> Option<String> {
+    if !is_split {
+        return flow.dep_name().map(String::from);
+    }
+    if flow.dep.is_none() && flow.arr.is_none() {
+        return None;
+    }
+    Some(format!(
+        "D {} / A {}",
+        flow.dep_name().unwrap_or("—"),
+        flow.arr_name().unwrap_or("—")
+    ))
+}
+
+/// Whether an ATIS-selected side differs from the weather-based suggestion.
+fn atis_disagrees(current: &ResolvedFlow, suggested: &ResolvedFlow) -> bool {
+    let differs = |side: &Option<FlowSide>, suggested: Option<&str>| {
+        side.as_ref().is_some_and(|side| {
+            side.source == FlowSource::Atis && suggested.is_some_and(|s| s != side.name)
+        })
+    };
+    differs(&current.dep, suggested.dep_name()) || differs(&current.arr, suggested.arr_name())
+}
+
+/// Build the departure rows by resolving each corridor name against the
+/// airport's `dep_corridors` definition (validated when the config loads).
+fn build_dep_rows(side: &FlowSide, dep_corridors: &HashMap<String, DepCorridor>) -> Vec<DepRow> {
+    let mut rows: Vec<_> = side
+        .rwys
+        .iter()
+        .flat_map(|(rwy, corridors)| corridors.iter().map(move |corridor| (rwy, corridor)))
+        .filter_map(|(rwy, corridor)| {
+            let info = dep_corridors.get(corridor)?;
+            Some(DepRow {
                 corridor: corridor.clone(),
                 direction: info.direction.clone(),
                 rwy: rwy.clone(),
                 gates: info.gates.clone(),
-            });
-        }
-    }
+            })
+        })
+        .collect();
     rows.sort_by(|a, b| {
         a.direction
             .cmp(&b.direction)
             .then_with(|| a.rwy.cmp(&b.rwy))
             .then_with(|| a.corridor.cmp(&b.corridor))
     });
-    Ok(rows)
-}
-
-/// Build the arrival runway→gate rows for one side of the flow.
-fn build_arr_rows(rwy_map: &HashMap<String, Vec<String>>) -> Vec<ArrRow> {
-    let mut rows = Vec::new();
-    let mut rwys: Vec<String> = rwy_map.keys().cloned().collect();
-    rwys.sort();
-    for rwy in rwys {
-        let gates = rwy_map.get(&rwy).cloned().unwrap_or_default();
-        rows.push(ArrRow {
-            rwy_label: rwy.clone(),
-            rwy_rowspan: 1,
-            gates,
-        });
-    }
     rows
 }
 
-fn build_airport_detail(
-    icao: &str,
-    procedure: &AirportProcedure,
-    weather: Option<&AirportWeather>,
-    atis: &[Atis],
-    current_flows: &HashMap<String, ResolvedFlow>,
-) -> AirportDetail {
-    let (resolved, error) = match weather {
-        Some(w) => (
-            procedure
-                .determine_flow_with_matches(w, atis, current_flows)
-                .ok(),
-            None,
-        ),
-        None if can_determine_without_weather(procedure, atis, icao) => (
-            procedure
-                .determine_flow_with_matches(&fallback_weather(icao), atis, current_flows)
-                .ok(),
-            None,
-        ),
-        None => (None, Some("No METAR or complete ATIS data".to_string())),
-    };
-    let suggested_flow = weather.and_then(|w| procedure.suggest_flow(w));
-    match resolved {
-        Some(flow) => {
-            let (dep_rows, dep_error) = match procedure {
-                AirportProcedure::Split(proc) => {
-                    match build_dep_rows(&flow.dep_rwys, &proc.dep_corridors) {
-                        Ok(rows) => (rows, None),
-                        Err(e) => (vec![], Some(e.to_string())),
-                    }
-                }
-                AirportProcedure::Combined(_) => (vec![], None),
-            };
-            AirportDetail {
-                icao: icao.to_string(),
-                dep_flow: flow.dep_name,
-                arr_flow: flow.arr_name,
-                suggested_flow,
-                dep_rows,
-                arr_rows: build_arr_rows(&flow.arr_rwys),
-                error: dep_error,
-            }
+fn build_arr_rows(side: &FlowSide) -> Vec<ArrRow> {
+    side.rwys
+        .iter()
+        .map(|(rwy, gates)| ArrRow {
+            rwy: rwy.clone(),
+            gates: gates.clone(),
+        })
+        .sorted_by(|a, b| a.rwy.cmp(&b.rwy))
+        .collect()
+}
+
+/// Everything known about one airport while building a snapshot.
+struct AirportState<'a> {
+    icao: &'a str,
+    procedure: &'a AirportProcedure,
+    weather: Option<&'a AirportWeather>,
+    flow: &'a ResolvedFlow,
+    suggested: ResolvedFlow,
+    /// The airport's ATISes, in `AtisType` order.
+    atis: Vec<&'a Atis>,
+}
+
+impl AirportState<'_> {
+    fn is_split(&self) -> bool {
+        matches!(self.procedure, AirportProcedure::Split(_))
+    }
+
+    fn issue(&self) -> Option<String> {
+        (!self.flow.issues.is_empty()).then(|| self.flow.issues.join("; "))
+    }
+
+    fn row(&self) -> IdsRow {
+        let atis_info = if self.atis.is_empty() {
+            "No ATIS".to_string()
+        } else {
+            self.atis
+                .iter()
+                .map(|a| {
+                    let label = match a.atis_type {
+                        AtisType::Combined => "ATIS",
+                        AtisType::Departure => "DEP",
+                        AtisType::Arrival => "ARR",
+                    };
+                    format!("{label} {} {}", a.atis_letter, zulu(a.timestamp))
+                })
+                .join(", ")
+        };
+        IdsRow {
+            icao: self.icao.to_string(),
+            is_split: self.is_split(),
+            flow: FlowSummary::new(self.procedure, self.flow),
+            weather: WeatherSummary::new(self.weather),
+            suggestion: atis_disagrees(self.flow, &self.suggested)
+                .then(|| describe(&self.suggested, self.is_split()))
+                .flatten(),
+            atis_info,
+            issue: self.issue(),
         }
-        None => AirportDetail {
-            icao: icao.to_string(),
-            dep_flow: None,
-            arr_flow: None,
-            suggested_flow,
-            dep_rows: vec![],
-            arr_rows: vec![],
-            error: error.or_else(|| Some("Could not determine flow".to_string())),
-        },
+    }
+
+    fn detail(&self, now: DateTime<Utc>) -> AirportDetail {
+        let (dep_rows, arr_rows) = match self.procedure {
+            AirportProcedure::Split(proc) => (
+                self.flow
+                    .dep
+                    .as_ref()
+                    .map(|side| build_dep_rows(side, &proc.dep_corridors))
+                    .unwrap_or_default(),
+                self.flow
+                    .arr
+                    .as_ref()
+                    .map(build_arr_rows)
+                    .unwrap_or_default(),
+            ),
+            // combined flows have no corridors or gates; the summary covers them
+            AirportProcedure::Combined(_) => (Vec::new(), Vec::new()),
+        };
+        let atis = self
+            .atis
+            .iter()
+            .map(|a| AtisDetail {
+                atis_type: a.atis_type,
+                label: match a.atis_type {
+                    AtisType::Combined => "ATIS",
+                    AtisType::Departure => "Departure ATIS",
+                    AtisType::Arrival => "Arrival ATIS",
+                },
+                letter: a.atis_letter.clone(),
+                preset: a.preset.clone(),
+                received: zulu(a.timestamp),
+                age: age(a.timestamp, now),
+                airport_conditions: a.airport_conditions.clone(),
+                notams: a.notams.clone(),
+                text_atis: a.text_atis.clone(),
+            })
+            .collect();
+        AirportDetail {
+            icao: self.icao.to_string(),
+            is_split: self.is_split(),
+            flow: FlowSummary::new(self.procedure, self.flow),
+            weather: WeatherSummary::new(self.weather),
+            suggestion: describe(&self.suggested, self.is_split()),
+            suggestion_differs: atis_disagrees(self.flow, &self.suggested),
+            issue: self.issue(),
+            dep_rows,
+            arr_rows,
+            atis,
+        }
     }
 }
 
@@ -368,7 +518,41 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
 pub struct IdsCache {
-    current: Mutex<Option<CachedSnapshot>>,
+    current: RwLock<Option<CachedSnapshot>>,
+    /// Held while rebuilding so only one refresh runs at a time.
+    refreshing: Mutex<()>,
+    /// Set by vATIS updates so the next read rebuilds.
+    dirty: AtomicBool,
+    /// Wakes the refresh task early.
+    changed: Notify,
+}
+
+impl IdsCache {
+    /// Mark the snapshot stale and wake the refresh task.
+    pub fn invalidate(&self) {
+        self.dirty.store(true, Ordering::Release);
+        self.changed.notify_one();
+    }
+
+    async fn fresh(&self) -> Option<Arc<IdsSnapshot>> {
+        if self.dirty.load(Ordering::Acquire) {
+            return None;
+        }
+        self.current
+            .read()
+            .await
+            .as_ref()
+            .filter(|entry| entry.inserted.elapsed() < REFRESH_INTERVAL)
+            .map(|entry| entry.snapshot.clone())
+    }
+
+    async fn latest(&self) -> Option<Arc<IdsSnapshot>> {
+        self.current
+            .read()
+            .await
+            .as_ref()
+            .map(|entry| entry.snapshot.clone())
+    }
 }
 
 struct CachedSnapshot {
@@ -385,72 +569,51 @@ struct IdsSnapshot {
     airports: HashMap<String, AirportDetail>,
 }
 
-fn resolve_snapshot_flow(
-    icao: &str,
-    procedure: &AirportProcedure,
-    weather: Option<&AirportWeather>,
-    atis: &[Atis],
-    current_flows: &HashMap<String, ResolvedFlow>,
-) -> Option<ResolvedFlow> {
-    match weather {
-        Some(weather) => procedure
-            .determine_flow_with_matches(weather, atis, current_flows)
-            .ok(),
-        None if can_determine_without_weather(procedure, atis, icao) => procedure
-            .determine_flow_with_matches(&fallback_weather(icao), atis, current_flows)
-            .ok(),
-        None => None,
-    }
-}
-
 fn build_snapshot(
-    config: &vzdv::config::ConfigIDS,
+    config: &ConfigIDS,
     weather: &[AirportWeather],
     atis: &[Atis],
     warning: Option<String>,
+    now: DateTime<Utc>,
 ) -> IdsSnapshot {
-    let weather_map = weather_by_icao(weather);
-    let mut current_flows = HashMap::new();
-    for use_try_match in [false, true] {
-        for (icao, procedure) in &config.0 {
-            let has_try_match = matches!(
-                procedure,
-                AirportProcedure::Combined(proc) if proc.try_match.is_some()
-            );
-            if has_try_match != use_try_match {
-                continue;
-            }
-            if let Some(flow) = resolve_snapshot_flow(
-                icao,
-                procedure,
-                weather_map.get(icao).copied(),
-                atis,
-                &current_flows,
-            ) {
-                current_flows.insert(icao.clone(), flow);
-            }
-        }
+    let weather_map: HashMap<String, &AirportWeather> = weather
+        .iter()
+        .map(|w| (format!("K{}", w.name), w))
+        .collect();
+
+    // airports without `tryMatch` first, so the ones matching them see their flows
+    let mut flows: HashMap<String, ResolvedFlow> = HashMap::new();
+    for (icao, procedure) in config
+        .0
+        .iter()
+        .sorted_by_key(|(_, procedure)| procedure.try_match_icao().is_some())
+    {
+        let flow = procedure.resolve(icao, weather_map.get(icao).copied(), atis, &flows);
+        flows.insert(icao.clone(), flow);
     }
 
     let mut rows = Vec::new();
     let mut airports = HashMap::new();
     for (icao, procedure) in &config.0 {
         let weather = weather_map.get(icao).copied();
-        rows.push(build_ids_row(
+        let airport = AirportState {
             icao,
             procedure,
             weather,
-            atis,
-            &current_flows,
-        ));
-        airports.insert(
-            icao.clone(),
-            build_airport_detail(icao, procedure, weather, atis, &current_flows),
-        );
+            flow: &flows[icao],
+            suggested: procedure.resolve(icao, weather, &[], &flows),
+            atis: atis
+                .iter()
+                .filter(|a| a.facility == *icao)
+                .sorted_by_key(|a| a.atis_type)
+                .collect(),
+        };
+        rows.push(airport.row());
+        airports.insert(icao.clone(), airport.detail(now));
     }
     rows.sort_by(|a, b| a.icao.cmp(&b.icao));
     IdsSnapshot {
-        updated_at: Utc::now(),
+        updated_at: now,
         warning,
         rows,
         airports,
@@ -458,12 +621,25 @@ fn build_snapshot(
 }
 
 async fn get_snapshot(state: &AppState) -> Result<Arc<IdsSnapshot>, AppError> {
-    let mut cached = state.ids_cache.current.lock().await;
-    if let Some(entry) = cached.as_ref()
-        && entry.inserted.elapsed() < REFRESH_INTERVAL
-    {
-        return Ok(entry.snapshot.clone());
+    let cache = &state.ids_cache;
+    if let Some(snapshot) = cache.fresh().await {
+        return Ok(snapshot);
     }
+    let _refreshing = match cache.refreshing.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            // another request is already rebuilding; don't wait on its METAR fetch
+            if let Some(snapshot) = cache.latest().await {
+                return Ok(snapshot);
+            }
+            cache.refreshing.lock().await
+        }
+    };
+    if let Some(snapshot) = cache.fresh().await {
+        return Ok(snapshot);
+    }
+    // cleared before reading so updates landing mid-rebuild trigger another
+    cache.dirty.store(false, Ordering::Release);
 
     let atis: Vec<Atis> = match sqlx::query_as(sql::GET_ALL_ATIS_ENTRIES)
         .fetch_all(&state.db)
@@ -471,7 +647,8 @@ async fn get_snapshot(state: &AppState) -> Result<Arc<IdsSnapshot>, AppError> {
     {
         Ok(atis) => atis,
         Err(e) => {
-            let Some(entry) = cached.as_mut() else {
+            let mut current = cache.current.write().await;
+            let Some(entry) = current.as_mut() else {
                 return Err(e.into());
             };
             error!("Could not refresh IDS ATIS data: {e}");
@@ -495,9 +672,12 @@ async fn get_snapshot(state: &AppState) -> Result<Arc<IdsSnapshot>, AppError> {
         Ok(weather) => (weather, None),
         Err(e) => {
             error!("Could not refresh IDS weather: {e}");
-            let weather = cached
-                .as_mut()
-                .map(|entry| std::mem::take(&mut entry.weather))
+            let weather = cache
+                .current
+                .read()
+                .await
+                .as_ref()
+                .map(|entry| entry.weather.clone())
                 .unwrap_or_default();
             let warning = if weather.is_empty() {
                 "Weather unavailable; using ATIS where possible."
@@ -507,8 +687,16 @@ async fn get_snapshot(state: &AppState) -> Result<Arc<IdsSnapshot>, AppError> {
             (weather, Some(warning.to_string()))
         }
     };
-    let snapshot = Arc::new(build_snapshot(&state.ids_config, &weather, &atis, warning));
-    *cached = Some(CachedSnapshot {
+    let now = Utc::now();
+    let atis = live_atis(atis, online_atis_callsigns(state).await.as_ref(), now);
+    let snapshot = Arc::new(build_snapshot(
+        &state.ids_config,
+        &weather,
+        &atis,
+        warning,
+        now,
+    ));
+    *cache.current.write().await = Some(CachedSnapshot {
         inserted: Instant::now(),
         snapshot: snapshot.clone(),
         weather,
@@ -516,12 +704,16 @@ async fn get_snapshot(state: &AppState) -> Result<Arc<IdsSnapshot>, AppError> {
     Ok(snapshot)
 }
 
+/// Rebuild the snapshot every minute, or right after a vATIS update.
 pub async fn refresh_snapshots(state: Arc<AppState>) {
     loop {
         if let Err(e) = get_snapshot(&state).await {
             error!("Could not refresh IDS snapshot: {e}");
         }
-        tokio::time::sleep(REFRESH_INTERVAL).await;
+        tokio::select! {
+            _ = tokio::time::sleep(REFRESH_INTERVAL) => {}
+            _ = state.ids_cache.changed.notified() => {}
+        }
     }
 }
 
@@ -605,6 +797,7 @@ async fn page_airport(
         user_info, flashed_messages,
         detail => snapshot.airports.get(&icao),
         updated_at => snapshot.updated_at.to_rfc3339(),
+        updated_z => snapshot.updated_at.format("%H:%M:%SZ").to_string(),
         warning => snapshot.warning,
     })?;
     Ok(Html(rendered).into_response())
@@ -626,6 +819,7 @@ async fn page_home(
         user_info, flashed_messages,
         rows => snapshot.rows,
         updated_at => snapshot.updated_at.to_rfc3339(),
+        updated_z => snapshot.updated_at.format("%H:%M:%SZ").to_string(),
         warning => snapshot.warning,
     })?;
     Ok(Html(rendered).into_response())
@@ -638,7 +832,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/ids/data", get(data_home))
         .route("/ids/{icao}", get(page_airport))
         .route("/ids/{icao}/data", get(data_airport))
-        .route("/ids/vatis/submit", post(receive_vatis_post))
+        .route(
+            "/ids/vatis/submit",
+            post(receive_vatis_post).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
         .route("/ids/vatis/current", get(show_atis_data))
         .layer(axum::middleware::map_response(
             |mut response: Response| async move {
@@ -654,7 +851,10 @@ pub fn router() -> Router<Arc<AppState>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::CacheEntry;
+    use crate::vatis_jwt::{
+        VatisKeys,
+        tests::{TEST_JWKS, token},
+    };
     use axum::{
         Extension,
         body::{Body, to_bytes},
@@ -682,7 +882,7 @@ mod tests {
         Session::new(None, Arc::new(MemoryStore::default()), None)
     }
 
-    async fn state() -> Arc<AppState> {
+    async fn state_with(mode: VatisJwtMode) -> Arc<AppState> {
         let db = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -697,11 +897,14 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/templates"
         )));
+        let mut config = vzdv::config::Config::default();
+        config.ids.vatis_jwt = mode;
         let state = Arc::new(AppState {
-            config: vzdv::config::Config::default(),
+            config,
             sectors_config: serde_json::from_str(include_str!("../../../splits.json")).unwrap(),
             ids_config: serde_json::from_str(include_str!("../../../ids.json")).unwrap(),
             ids_cache: IdsCache::default(),
+            vatis_keys: VatisKeys::from_jwks(TEST_JWKS),
             db,
             templates,
             cache: mini_moka::sync::Cache::new(30),
@@ -714,7 +917,20 @@ mod tests {
             "METAR_FULL".into(),
             CacheEntry::new(serde_json::to_string(&weather).unwrap()),
         );
+        set_online(&state, &["KAPA_ATIS"]);
         state
+    }
+
+    async fn state() -> Arc<AppState> {
+        state_with(VatisJwtMode::Log).await
+    }
+
+    /// Stub the VATSIM feed's online ATIS list.
+    fn set_online(state: &AppState, callsigns: &[&str]) {
+        state.cache.insert(
+            ONLINE_ATIS_CACHE_KEY.into(),
+            CacheEntry::new(serde_json::to_string(callsigns).unwrap()),
+        );
     }
 
     async fn register_user(state: &AppState, on_roster: bool, home: &str) {
@@ -735,7 +951,7 @@ mod tests {
             .unwrap();
     }
 
-    async fn request(state: &Arc<AppState>, session: &Session, path: &str) -> Response {
+    async fn send(state: &Arc<AppState>, session: &Session, request: Request<Body>) -> Response {
         router()
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
@@ -743,9 +959,59 @@ mod tests {
             ))
             .layer(Extension(session.clone()))
             .with_state(state.clone())
-            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .oneshot(request)
             .await
             .unwrap()
+    }
+
+    async fn request(state: &Arc<AppState>, session: &Session, path: &str) -> Response {
+        send(
+            state,
+            session,
+            Request::builder().uri(path).body(Body::empty()).unwrap(),
+        )
+        .await
+    }
+
+    /// POST a vATIS update, signed like vATIS when `signed` is true.
+    async fn post_vatis(
+        state: &Arc<AppState>,
+        changes: serde_json::Value,
+        signed: bool,
+    ) -> StatusCode {
+        let mut body = json!({
+            "facility": "KAPA", "preset": "NORTH VMC", "atisLetter": "B", "atisType": "combined",
+            "airportConditions": "VISUAL APCHS IN USE.", "notams": "TWY A CLSD.",
+            "textAtis": "CENTENNIAL ATIS INFO B 1453Z.", "timestamp": "2026-10-02T14:53:00.1234567Z",
+            "version": "4.2.0"
+        });
+        for (key, value) in changes.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        let mut builder =
+            Request::post("/ids/vatis/submit").header("content-type", "application/json");
+        if signed {
+            builder = builder.header("authorization", format!("Bearer {}", token(json!({}))));
+        }
+        let request = builder.body(Body::from(body.to_string())).unwrap();
+        send(state, &session(), request).await.status()
+    }
+
+    async fn stored_atis(state: &AppState) -> Vec<Atis> {
+        sqlx::query_as(sql::GET_ALL_ATIS_ENTRIES)
+            .fetch_all(&state.db)
+            .await
+            .unwrap()
+    }
+
+    async fn body_text(response: Response) -> String {
+        String::from_utf8(
+            to_bytes(response.into_body(), 1_000_000)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap()
     }
 
     async fn response_json(response: Response) -> serde_json::Value {
@@ -758,26 +1024,31 @@ mod tests {
         state
             .ids_cache
             .current
-            .lock()
+            .write()
             .await
             .as_mut()
             .unwrap()
             .inserted = Instant::now() - REFRESH_INTERVAL;
     }
 
-    async fn insert_atis(state: &AppState) {
-        sqlx::query(sql::INSERT_ATIS_ENTRY)
+    async fn insert_atis(state: &AppState, preset: &str, received: DateTime<Utc>) {
+        sqlx::query(sql::UPSERT_ATIS_ENTRY)
             .bind("KAPA")
-            .bind("NORTH VMC")
+            .bind(preset)
             .bind("B")
-            .bind("combined")
+            .bind(AtisType::Combined)
             .bind("")
             .bind("")
-            .bind(Utc::now())
+            .bind(received)
             .bind("test")
+            .bind("")
             .execute(&state.db)
             .await
             .unwrap();
+    }
+
+    fn row<'a>(snapshot: &'a IdsSnapshot, icao: &str) -> &'a IdsRow {
+        snapshot.rows.iter().find(|row| row.icao == icao).unwrap()
     }
 
     #[tokio::test]
@@ -809,7 +1080,7 @@ mod tests {
                 assert!(response_json(response).await.get("error").is_some());
             }
         }
-        assert!(state.ids_cache.current.lock().await.is_none());
+        assert!(state.ids_cache.current.read().await.is_none());
     }
 
     #[tokio::test]
@@ -837,22 +1108,21 @@ mod tests {
             assert_eq!(detail["updated_at"], overview["updated_at"]);
             assert_eq!(detail["detail"]["icao"], "KDEN");
             assert!(detail["detail"]["dep_rows"][0]["corridor"].is_string());
+            assert!(detail["detail"]["arr_rows"][0]["rwy"].is_string());
             assert_eq!(
                 request(&state, &session, "/ids/ZZZZ/data").await.status(),
                 StatusCode::NOT_FOUND
             );
-            for path in ["/ids", "/ids/KDEN", "/ids/KAPA"] {
+            for (path, template) in [
+                ("/ids", "ids-airports-template"),
+                ("/ids/KDEN", "ids-dep-template"),
+                ("/ids/KAPA", "ids-atis-template"),
+            ] {
                 let response = request(&state, &session, path).await;
                 assert_eq!(response.status(), StatusCode::OK);
-                let html = String::from_utf8(
-                    to_bytes(response.into_body(), 1_000_000)
-                        .await
-                        .unwrap()
-                        .to_vec(),
-                )
-                .unwrap();
+                let html = body_text(response).await;
                 assert!(html.contains("/static/ids_page.js"));
-                assert!(html.contains("id=\"ids-row-template\""));
+                assert!(html.contains(&format!("id=\"{template}\"")), "{path}");
             }
             sqlx::query(sql::SET_CONTROLLER_ON_ROSTER)
                 .bind(123)
@@ -887,21 +1157,22 @@ mod tests {
         while let Some(result) = tasks.join_next().await {
             assert!(Arc::ptr_eq(&first, &result.unwrap()));
         }
-        insert_atis(&state).await;
+        insert_atis(&state, "NORTH VMC", Utc::now()).await;
         assert!(Arc::ptr_eq(&first, &get_snapshot(&state).await.unwrap()));
         expire(&state).await;
         let second = get_snapshot(&state).await.unwrap();
         assert!(!Arc::ptr_eq(&first, &second));
-        let row = second.rows.iter().find(|row| row.icao == "KAPA").unwrap();
-        assert_eq!(row.flow_name.as_deref(), Some("NORTH VMC"));
-        assert_eq!(row.atis_info, "COMBINED B");
+        let row = row(&second, "KAPA");
+        assert_eq!(row.flow.dep_name.as_deref(), Some("NORTH VMC"));
+        assert_eq!(row.flow.dep_source, Some(FlowSource::Atis));
+        assert!(row.atis_info.starts_with("ATIS B "), "{}", row.atis_info);
     }
 
     #[tokio::test]
     async fn weather_failure_retains_weather_while_atis_updates() {
         let state = state().await;
         let first = get_snapshot(&state).await.unwrap();
-        insert_atis(&state).await;
+        insert_atis(&state, "NORTH VMC", Utc::now()).await;
         state
             .cache
             .insert("METAR_FULL".into(), CacheEntry::new("invalid JSON".into()));
@@ -914,9 +1185,9 @@ mod tests {
                 .unwrap()
                 .contains("last available weather")
         );
-        let row = second.rows.iter().find(|row| row.icao == "KAPA").unwrap();
-        assert_eq!(row.wind.as_deref(), Some("180@5"));
-        assert_eq!(row.atis_info, "COMBINED B");
+        let row = row(&second, "KAPA");
+        assert_eq!(row.weather.wind.as_deref(), Some("180@5"));
+        assert!(row.atis_info.starts_with("ATIS B "));
         assert!(second.updated_at >= first.updated_at);
         assert!(Arc::ptr_eq(&second, &get_snapshot(&state).await.unwrap()));
     }
@@ -930,52 +1201,169 @@ mod tests {
         let second = get_snapshot(&state).await.unwrap();
         assert!(second.warning.is_some());
         assert_eq!(first.updated_at, second.updated_at);
-        assert_eq!(first.rows[0].dep_rwys, second.rows[0].dep_rwys);
+        assert_eq!(first.rows[0].flow.dep_rwys, second.rows[0].flow.dep_rwys);
         assert!(Arc::ptr_eq(&second, &get_snapshot(&state).await.unwrap()));
     }
 
     #[tokio::test]
-    async fn templates_render_empty_error_and_escaped_states() {
+    async fn templates_render_empty_issue_and_escaped_states() {
         let state = state().await;
         let snapshot = get_snapshot(&state).await.unwrap();
+        let render = |name: &str, ctx: minijinja::Value| {
+            state
+                .templates
+                .get_template(name)
+                .unwrap()
+                .render(ctx)
+                .unwrap()
+        };
         let mut row = snapshot.rows[0].clone();
         row.atis_info = "<img src=x onerror=alert(1)>".into();
-        let html = state
-            .templates
-            .get_template("ids/base.jinja")
-            .unwrap()
-            .render(context! {
+        let html = render(
+            "ids/base.jinja",
+            context! {
                 rows => vec![row], user_info => user(true, false),
                 updated_at => snapshot.updated_at.to_rfc3339(), warning => "\"<warning>"
-            })
-            .unwrap();
+            },
+        );
         assert!(!html.contains("<img src=x"));
         assert!(html.contains("&lt;img"));
-        let empty = state
-            .templates
-            .get_template("ids/base.jinja")
-            .unwrap()
-            .render(context! {
+        let empty = render(
+            "ids/base.jinja",
+            context! {
                 rows => Vec::<IdsRow>::new(), user_info => user(false, true),
                 updated_at => snapshot.updated_at.to_rfc3339(),
-            })
-            .unwrap();
+            },
+        );
         assert!(empty.contains("No IDS airport data configured"));
         assert!(!empty.contains("href=\"/ids\">IDS"));
         let mut detail = snapshot.airports["KDEN"].clone();
-        detail.error = Some("No METAR or complete ATIS data".into());
+        detail.issue = Some("No METAR available".into());
         detail.dep_rows.clear();
-        let html = state
-            .templates
-            .get_template("ids/airport.jinja")
-            .unwrap()
-            .render(context! {
-                detail, updated_at => snapshot.updated_at.to_rfc3339(),
-            })
-            .unwrap();
-        assert!(html.contains("id=\"ids-detail\" hidden"));
-        assert!(html.contains("id=\"ids-rows\""));
-        assert!(html.contains("id=\"ids-row-template\""));
+        let html = render(
+            "ids/airport.jinja",
+            context! { detail, updated_at => snapshot.updated_at.to_rfc3339() },
+        );
+        assert!(html.contains("No METAR available"));
+        assert!(html.contains(
+            "id=\"ids-dep-table\" class=\"table table-bordered table-sm align-middle\" hidden"
+        ));
+        assert!(html.contains("id=\"ids-dep-template\""));
+        assert!(html.contains("No ATIS online."));
+        // combined airports have no corridor or gate tables
+        let html = render(
+            "ids/airport.jinja",
+            context! { detail => snapshot.airports["KAPA"].clone(), updated_at => "" },
+        );
+        assert!(!html.contains("ids-dep-template"));
+        assert!(html.contains("ids-atis-template"));
+    }
+
+    /// Every element static/ids_page.js updates exists in the rendered pages.
+    #[tokio::test]
+    async fn templates_have_every_element_the_script_updates() {
+        let state = state().await;
+        insert_atis(&state, "NORTH VMC", Utc::now()).await;
+        let snapshot = get_snapshot(&state).await.unwrap();
+        let render = |name: &str, ctx: minijinja::Value| {
+            state
+                .templates
+                .get_template(name)
+                .unwrap()
+                .render(ctx)
+                .unwrap()
+        };
+        let common = ["ids-page", "ids-status", "ids-warning", "ids-updated"];
+        let overview = render(
+            "ids/base.jinja",
+            context! { rows => snapshot.rows.clone(), updated_at => "" },
+        );
+        let overview_ids = [
+            "ids-airports-table",
+            "ids-airports-rows",
+            "ids-airports-empty",
+            "ids-airports-template",
+        ];
+        let overview_fields = [
+            "airport-link",
+            "dep_rwys",
+            "dep_source",
+            "arr_rwys",
+            "arr_source",
+            "split",
+            "dep_name",
+            "arr_name",
+            "flow_name",
+            "suggestion",
+            "issue",
+            "atis_info",
+            "conditions",
+            "wind",
+            "altimeter",
+            "raw_metar",
+        ];
+        let airport_ids = [
+            "ids-issue",
+            "ids-dep-rwys",
+            "ids-dep-source",
+            "ids-dep-name",
+            "ids-arr-rwys",
+            "ids-arr-source",
+            "ids-arr-name",
+            "ids-suggestion",
+            "ids-suggested-flow",
+            "ids-conditions",
+            "ids-weather",
+            "ids-metar",
+            "ids-atis-rows",
+            "ids-atis-empty",
+            "ids-atis-template",
+        ];
+        let split_ids = [
+            "ids-dep-table",
+            "ids-dep-rows",
+            "ids-dep-empty",
+            "ids-dep-template",
+            "ids-arr-table",
+            "ids-arr-rows",
+            "ids-arr-empty",
+            "ids-arr-template",
+        ];
+        let airport_fields = [
+            "direction",
+            "rwy",
+            "gates",
+            "label",
+            "letter",
+            "preset",
+            "received",
+            "airport_conditions",
+            "notams",
+            "text_atis",
+        ];
+        let has = |html: &str, attr: &str, values: &[&str]| {
+            for value in values {
+                assert!(
+                    html.contains(&format!("{attr}=\"{value}\"")),
+                    "missing {attr} {value}"
+                );
+            }
+        };
+        has(&overview, "id", &common);
+        has(&overview, "id", &overview_ids);
+        has(&overview, "data-field", &overview_fields);
+        for icao in ["KDEN", "KAPA"] {
+            let html = render(
+                "ids/airport.jinja",
+                context! { detail => snapshot.airports[icao].clone(), updated_at => "" },
+            );
+            has(&html, "id", &common);
+            has(&html, "id", &airport_ids);
+            if icao == "KDEN" {
+                has(&html, "id", &split_ids);
+                has(&html, "data-field", &airport_fields);
+            }
+        }
     }
 
     #[tokio::test]
@@ -983,13 +1371,185 @@ mod tests {
         let state = state().await;
         for procedure in state.ids_config.0.values() {
             if let AirportProcedure::Split(procedure) = procedure {
-                for flow in procedure.dep_flows.values() {
-                    let rows = build_dep_rows(&flow.rwys, &procedure.dep_corridors).unwrap();
-                    let keys: std::collections::HashSet<_> =
-                        rows.iter().map(|row| &row.corridor).collect();
+                for (name, flow) in &procedure.dep_flows {
+                    let side = FlowSide {
+                        name: name.clone(),
+                        rwys: flow.rwys.clone(),
+                        source: FlowSource::Atis,
+                    };
+                    let rows = build_dep_rows(&side, &procedure.dep_corridors);
+                    let keys: HashSet<_> = rows.iter().map(|row| &row.corridor).collect();
                     assert_eq!(keys.len(), rows.len());
+                    assert_eq!(rows.len(), flow.rwys.values().flatten().count());
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn vatis_updates_replace_previous_and_disconnect_clears() {
+        let state = state().await;
+        let first = get_snapshot(&state).await.unwrap();
+        assert_eq!(row(&first, "KAPA").atis_info, "No ATIS");
+
+        assert_eq!(post_vatis(&state, json!({}), true).await, StatusCode::OK);
+        assert_eq!(
+            post_vatis(
+                &state,
+                json!({ "atisLetter": "C", "preset": "SOUTH VMC" }),
+                true
+            )
+            .await,
+            StatusCode::OK
+        );
+        let stored = stored_atis(&state).await;
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].atis_letter, "C");
+        assert_eq!(stored[0].text_atis, "CENTENNIAL ATIS INFO B 1453Z.");
+        // received time, not vATIS's clock
+        assert!(Utc::now() - stored[0].timestamp < TimeDelta::minutes(1));
+
+        // the update invalidates the cached snapshot right away
+        let updated = get_snapshot(&state).await.unwrap();
+        assert!(!Arc::ptr_eq(&first, &updated));
+        assert!(row(&updated, "KAPA").atis_info.starts_with("ATIS C "));
+        let detail = &updated.airports["KAPA"];
+        assert_eq!(detail.atis.len(), 1);
+        assert_eq!(detail.atis[0].airport_conditions, "VISUAL APCHS IN USE.");
+        assert_eq!(detail.atis[0].age, "just now");
+
+        let disconnect = json!({
+            "preset": "", "atisLetter": "", "airportConditions": "", "notams": "", "textAtis": ""
+        });
+        assert_eq!(post_vatis(&state, disconnect, true).await, StatusCode::OK);
+        assert!(stored_atis(&state).await.is_empty());
+        let cleared = get_snapshot(&state).await.unwrap();
+        assert_eq!(row(&cleared, "KAPA").atis_info, "No ATIS");
+        assert_eq!(
+            row(&cleared, "KAPA").flow.dep_source,
+            Some(FlowSource::Matched)
+        );
+    }
+
+    #[tokio::test]
+    async fn vatis_updates_are_validated() {
+        let state = state().await;
+        for (changes, status) in [
+            (
+                json!({ "facility": "KBKF" }),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                json!({ "atisLetter": "BB" }),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                json!({ "atisLetter": "b" }),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (json!({ "preset": "" }), StatusCode::UNPROCESSABLE_ENTITY),
+            (
+                json!({ "textAtis": "X".repeat(MAX_ATIS_TEXT + 1) }),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                json!({ "atisType": "Combined" }),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+        ] {
+            assert_eq!(
+                post_vatis(&state, changes.clone(), true).await,
+                status,
+                "{changes}"
+            );
+        }
+        assert!(stored_atis(&state).await.is_empty());
+        // facility case doesn't matter
+        assert_eq!(
+            post_vatis(&state, json!({ "facility": "kapa" }), true).await,
+            StatusCode::OK
+        );
+        assert_eq!(stored_atis(&state).await[0].facility, "KAPA");
+    }
+
+    #[tokio::test]
+    async fn token_mode_controls_unsigned_updates() {
+        let state = state_with(VatisJwtMode::Enforce).await;
+        assert_eq!(
+            post_vatis(&state, json!({}), false).await,
+            StatusCode::UNAUTHORIZED
+        );
+        assert!(stored_atis(&state).await.is_empty());
+        assert_eq!(post_vatis(&state, json!({}), true).await, StatusCode::OK);
+
+        for mode in [VatisJwtMode::Log, VatisJwtMode::Off] {
+            let state = state_with(mode).await;
+            assert_eq!(post_vatis(&state, json!({}), false).await, StatusCode::OK);
+            assert_eq!(stored_atis(&state).await.len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn offline_atis_is_ignored_after_grace_period() {
+        let state = state().await;
+        set_online(&state, &[]);
+        insert_atis(&state, "NORTH VMC", Utc::now() - TimeDelta::minutes(30)).await;
+        let snapshot = get_snapshot(&state).await.unwrap();
+        assert_eq!(row(&snapshot, "KAPA").atis_info, "No ATIS");
+
+        // a fresh update counts even before the feed lists the station
+        insert_atis(&state, "NORTH VMC", Utc::now()).await;
+        expire(&state).await;
+        let snapshot = get_snapshot(&state).await.unwrap();
+        assert!(row(&snapshot, "KAPA").atis_info.starts_with("ATIS B "));
+
+        // without the feed, trust the stored data
+        let now = Utc::now();
+        let atis = stored_atis(&state).await;
+        assert_eq!(
+            live_atis(atis.clone(), None, now + TimeDelta::hours(1)).len(),
+            1
+        );
+        let online = HashSet::from(["KAPA_ATIS".to_string()]);
+        assert_eq!(
+            live_atis(atis, Some(&online), now + TimeDelta::hours(1)).len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn suggestion_shows_when_atis_disagrees_with_weather() {
+        let state = state().await;
+        // KDEN is south in the stubbed weather, so KAPA matches it south
+        insert_atis(&state, "NORTH VMC", Utc::now()).await;
+        let snapshot = get_snapshot(&state).await.unwrap();
+        let apa = row(&snapshot, "KAPA");
+        assert_eq!(apa.suggestion.as_deref(), Some("SOUTH VMC"));
+        assert!(snapshot.airports["KAPA"].suggestion_differs);
+
+        insert_atis(&state, "SOUTH VMC", Utc::now()).await;
+        expire(&state).await;
+        let snapshot = get_snapshot(&state).await.unwrap();
+        assert_eq!(row(&snapshot, "KAPA").suggestion, None);
+        assert_eq!(
+            snapshot.airports["KAPA"].suggestion.as_deref(),
+            Some("SOUTH VMC")
+        );
+        let den = &snapshot.airports["KDEN"];
+        assert_eq!(
+            den.suggestion.as_deref(),
+            Some("D SOUTH CALM / A SOUTH CALM")
+        );
+        assert_eq!(den.flow.dep_source, Some(FlowSource::Weather));
+    }
+
+    #[test]
+    fn ages_read_naturally() {
+        let now = Utc::now();
+        assert_eq!(age(now, now), "just now");
+        assert_eq!(age(now - TimeDelta::minutes(12), now), "12 min ago");
+        assert_eq!(age(now - TimeDelta::minutes(65), now), "1h 05m ago");
+        // clock skew never shows a negative age
+        assert_eq!(age(now + TimeDelta::minutes(2), now), "just now");
     }
 }
