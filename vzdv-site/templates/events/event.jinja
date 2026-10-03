@@ -28,7 +28,7 @@
       </p>
     {% endif %}
     {% if event_not_over %}
-      <div class="d-flex justify-content-between pb-3">
+      <div class="d-flex flex-wrap gap-2 pb-3">
         {% if user_info and user_info.is_some_staff or is_on_roster %}
           <button role="button" class="btn btn-primary" onclick="modalRegisterForm.showModal()">
             {% if self_register %}
@@ -64,76 +64,62 @@
   </div>
 </div>
 
-<div class="row pt-4">
-  <div class="col">
-    <h4>Enroute Positions</h4>
-    <ul class="list-group">
-      {% for position in positions %}
-        {% if position.category == 'Enroute' %}
-          <li class="list-group-item d-flex justify-content-between">
-            <span>{{ position.name }} - {{ position.controller }}</span>
+{% if cic_positions or (is_event_staff and event_not_over) %}
+  <div class="d-flex align-items-center gap-3 pt-4 pb-2">
+    <h4 class="mb-0">CIC Positions</h4>
+    {% if is_event_staff and event_not_over %}
+      <button class="btn btn-outline-warning btn-sm" id="btn-cic-position-add" type="button">+ Add</button>
+    {% endif %}
+  </div>
+  <div class="row row-cols-1 row-cols-lg-3 gy-3">
+    {% for position in cic_positions %}
+      <div class="col">
+        <div class="border rounded px-3 py-2 h-100 d-flex justify-content-between align-items-center gap-2">
+          <div class="text-truncate">
+            <div class="small text-body-secondary text-truncate">{{ position.category }}</div>
+            <div class="text-truncate {% if not position.cid %}text-body-secondary{% endif %}">{{ position.controller }}</div>
+          </div>
+          {% if is_event_staff and event_not_over %}
+            <div class="d-flex gap-2 flex-shrink-0">
+              <button class="btn btn-outline-warning btn-sm btn-cic-position-set" position_id="{{ position.id }}" controller_id="{{ position.cid or 0 }}" type="button" title="Set controller"><i class="bi bi-person"></i></button>
+              <form action="/events/{{ event.id }}/delete_cic_position/{{ position.id }}" method="POST">
+                <button class="btn btn-outline-danger btn-sm" type="submit" title="Delete"><i class="bi bi-trash"></i></button>
+              </form>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}
+
+<div class="row gy-4 pt-4">
+  {% for category in ['Enroute', 'TRACON', 'Local'] %}
+    <div class="col-12 col-lg-4">
+      <h4>{{ category }} Positions</h4>
+      <ul class="list-group">
+        {% for position in positions if position.category == category %}
+          <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
+            <span>
+              {{ position.name }} -
+              {% if position.cid %}{{ position.controller }}{% else %}<span class="text-body-secondary">{{ position.controller }}</span>{% endif %}
+            </span>
             {% if is_event_staff and event_not_over %}
-              <div class="d-flex">
-                <button class="btn btn-outline-warning btn-sm me-3 btn-position-set" position_id="{{ position.id }}" type="submit"><i class="bi bi-person"></i></button>
+              <div class="d-flex gap-2 flex-shrink-0">
+                <button class="btn btn-outline-warning btn-sm btn-position-set" position_id="{{ position.id }}" type="button" title="Set controller"><i class="bi bi-person"></i></button>
                 <form action="/events/{{ event.id }}/delete_position/{{ position.id }}" method="POST">
-                  <button class="btn btn-outline-danger btn-sm" type="submit"><i class="bi bi-trash"></i></button>
+                  <button class="btn btn-outline-danger btn-sm" type="submit" title="Delete"><i class="bi bi-trash"></i></button>
                 </form>
               </div>
             {% endif %}
           </li>
-        {% endif %}
-      {% endfor %}
-    </ul>
-    {% if event_not_over and is_event_staff %}
-      <button class="btn btn-outline-warning btn-sm btn-position-add" style="width: 100%" category="Enroute">+ Add</button>
-    {% endif %}
-  </div>
-  <div class="col">
-    <h4>TRACON Positions</h4>
-    <ul class="list-group">
-      {% for position in positions %}
-        {% if position.category == 'TRACON' %}
-          <li class="list-group-item d-flex justify-content-between">
-            <span>{{ position.name }} - {{ position.controller }}</span>
-            {% if is_event_staff and event_not_over %}
-              <div class="d-flex">
-                <button class="btn btn-outline-warning btn-sm me-3 btn-position-set" position_id="{{ position.id }}" type="submit"><i class="bi bi-person"></i></button>
-                <form action="/events/{{ event.id }}/delete_position/{{ position.id }}" method="POST">
-                  <button class="btn btn-outline-danger btn-sm" type="submit"><i class="bi bi-trash"></i></button>
-                </form>
-              </div>
-            {% endif %}
-          </li>
-        {% endif %}
-      {% endfor %}
-    </ul>
-    {% if event_not_over and is_event_staff %}
-      <button class="btn btn-outline-warning btn-sm btn-position-add" style="width: 100%" category="TRACON">+ Add</button>
-    {% endif %}
-  </div>
-  <div class="col">
-    <h4>Local Positions</h4>
-    <ul class="list-group">
-      {% for position in positions %}
-        {% if position.category == 'Local' %}
-          <li class="list-group-item d-flex justify-content-between">
-            <span>{{ position.name }} - {{ position.controller }}</span>
-            {% if is_event_staff and event_not_over %}
-              <div class="d-flex">
-                <button class="btn btn-outline-warning btn-sm me-3 btn-position-set" position_id="{{ position.id }}" type="submit"><i class="bi bi-person"></i></button>
-                <form action="/events/{{ event.id }}/delete_position/{{ position.id }}" method="POST">
-                  <button class="btn btn-outline-danger btn-sm" type="submit"><i class="bi bi-trash"></i></button>
-                </form>
-              </div>
-            {% endif %}
-          </li>
-        {% endif %}
-      {% endfor %}
-    </ul>
-    {% if event_not_over and is_event_staff %}
-      <button class="btn btn-outline-warning btn-sm btn-position-add" style="width: 100%" category="Local">+ Add</button>
-    {% endif %}
-  </div>
+        {% endfor %}
+      </ul>
+      {% if event_not_over and is_event_staff %}
+        <button class="btn btn-outline-warning btn-sm w-100 mt-2 btn-position-add" category="{{ category }}" type="button">+ Add</button>
+      {% endif %}
+    </div>
+  {% endfor %}
 </div>
 
 {% if is_event_staff %}
@@ -325,6 +311,51 @@
     </div>
   </form>
 </dialog>
+
+{% if is_event_staff %}
+  <dialog id="modalAddCicPosition">
+    <h2 class="pb-3">Add CIC position</h2>
+    <form action="/events/{{ event.id }}/add_cic_position" method="POST">
+      <div class="row">
+        <div class="col">
+          <div class="mb-3">
+            <label for="cic-category" class="form-label">Category</label>
+            <input type="text" class="form-control" id="cic-category" name="category" maxlength="{{ cic_category_max_length }}" placeholder="e.g. DEN, D01, Enroute, Event" required>
+          </div>
+          <div class="d-flex justify-content-between">
+            <button class="btn btn-warning" type="button" id="btn-modal-add-cic-position-close">Close</button>
+            <button class="btn btn-success" type="submit">Add</button>
+          </div>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="modalSetCicPosition">
+    <h2 class="pb-3">Set CIC position</h2>
+    <form action="/events/{{ event.id }}/set_cic_position" method="POST">
+      <div class="row">
+        <div class="col">
+          <input type="hidden" name="position_id" id="set-cic-position-id">
+          <div class="mb-3">
+            <label for="cic-controller" class="form-label">Registered controller</label>
+            <select class="form-select" name="controller" id="cic-controller">
+              <option value="0">Unassigned</option>
+              {% for (cid, name) in registered_controllers %}
+                <option value="{{ cid }}">{{ name }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">Only controllers who have registered for this event can be assigned as CIC.</div>
+          </div>
+          <div class="d-flex justify-content-between">
+            <button class="btn btn-warning" type="button" id="btn-modal-set-cic-position-close">Close</button>
+            <button class="btn btn-success" type="submit">Save</button>
+          </div>
+        </div>
+      </div>
+    </form>
+  </dialog>
+{% endif %}
 
 <dialog id="modalNoShow">
   <h2 class="pb-3">No shows</h2>
