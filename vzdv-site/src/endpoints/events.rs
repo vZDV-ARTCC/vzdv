@@ -639,6 +639,10 @@ async fn api_delete_event(
             .bind(id)
             .execute(&mut *tx)
             .await?;
+        sqlx::query(sql::DELETE_EVENT_ENROUTE_SECTOR_SPLIT)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query(sql::DELETE_EVENT)
             .bind(id)
             .execute(&mut *tx)
