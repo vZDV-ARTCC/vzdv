@@ -1,29 +1,3 @@
-document.querySelectorAll(".event-time").forEach((element) => {
-  const date = new Date(element.innerText);
-  element.innerText = date.toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    hour: "numeric",
-    minute: "numeric",
-  });
-  element.classList.remove("d-none");
-  element.classList.remove("event-time");
-
-  // this is annoying
-  const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, "0");
-  const dom = date.getDate().toString().padStart(2, "0");
-  const hour = date.getHours().toString().padStart(2, "0");
-  const minute = date.getMinutes().toString().padStart(2, "0");
-  document.getElementById(
-    element.getAttribute("updateTarget")
-  ).value = `${year}-${month}-${dom}T${hour}:${minute}`;
-});
-
-document.getElementById("input-timezone").value =
-  Intl.DateTimeFormat().resolvedOptions().timeZone;
-
 document.getElementById("button-delete")?.addEventListener("click", (e) => {
   e.preventDefault();
   const eventId = document
