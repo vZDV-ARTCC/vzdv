@@ -1,7 +1,7 @@
 //! Update activity from VATSIM.
 
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, Months, Utc};
+use chrono::{DateTime, Months, NaiveDateTime, Utc};
 use log::{debug, error, warn};
 use sqlx::{Pool, Row, Sqlite};
 use std::{
@@ -79,6 +79,11 @@ impl ActivitySource for LiveVatsim {
     }
 }
 
+/// How far apart a live-feed logon time and a completed session's start can
+/// be for them to be the same connection. The sessions API reports the logon
+/// time truncated to the second.
+const SESSION_START_TOLERANCE_SECS: i64 = 1;
+
 /// Seconds a controller has been online this session, clamped to the current
 /// month and a 24-hour maximum.
 ///
@@ -98,27 +103,53 @@ fn clamped_online_seconds(
         .clamp(0, 86_400))
 }
 
-/// Get the clamped online session length of all currently-online,
-/// in-facility controllers.
+/// Whether a live-feed connection already shows up as a completed session.
+///
+/// The live feed and the sessions API are fetched at different times — up to
+/// a whole true-up sweep apart — so a controller can still be listed online
+/// after their just-ended connection has landed in the API. Counting it as
+/// online time too would count it twice.
+fn connection_completed(sessions: &[AtcSessionEntry], connection: &Controller) -> bool {
+    let Ok(logon) = DateTime::parse_from_rfc3339(&connection.logon_time) else {
+        return false;
+    };
+    sessions.iter().any(|session| {
+        session.callsign == connection.callsign
+            && session
+                .start
+                .get(..19)
+                .and_then(|start| NaiveDateTime::parse_from_str(start, "%Y-%m-%dT%H:%M:%S").ok())
+                .is_some_and(|start| {
+                    (start.and_utc().timestamp() - logon.timestamp()).abs()
+                        <= SESSION_START_TOLERANCE_SECS
+                })
+    })
+}
+
+/// Get all currently-online, in-facility connections by CID, each with its
+/// clamped online seconds as of now.
 ///
 /// Mirrors `update_single_activity`'s `online_seconds` handling, so that a
 /// full true-up doesn't drop in-progress session time from the current month
 /// and cause a visible dip until the next spot-update.
-async fn online_controller_seconds(
+async fn online_connections(
     source: &impl ActivitySource,
     config: &Config,
-) -> Result<HashMap<u32, i64>> {
+) -> Result<HashMap<u32, Vec<(Controller, i64)>>> {
     let controllers = source.online_controllers().await?;
     let now = source.now();
     let month_start =
         DateTime::parse_from_rfc3339(&format!("{}T00:00:00Z", now.format("%Y-%m-01")))?.timestamp();
-    let mut map = HashMap::new();
+    let mut map: HashMap<u32, Vec<(Controller, i64)>> = HashMap::new();
     for controller in controllers {
         if !position_in_facility_airspace(config, &controller.callsign) {
             continue;
         }
         match clamped_online_seconds(&controller.logon_time, &now, month_start) {
-            Ok(secs) => *map.entry(controller.cid as u32).or_insert(0) += secs,
+            Ok(secs) => map
+                .entry(controller.cid as u32)
+                .or_default()
+                .push((controller, secs)),
             Err(e) => warn!("Could not parse logon time for {}: {e}", controller.cid),
         }
     }
@@ -179,7 +210,7 @@ async fn true_up_single_activity(
     db: &Pool<Sqlite>,
     five_months_ago: &str,
     cid: u32,
-    online_seconds: &HashMap<u32, i64>,
+    online: &HashMap<u32, Vec<(Controller, i64)>>,
 ) -> Result<()> {
     // get the last 5 months of the controller's activity
     let sessions = match source.atc_sessions(cid as u64, five_months_ago).await {
@@ -195,7 +226,7 @@ async fn true_up_single_activity(
 
     // group the controller's activity by month
     let mut seconds_map: HashMap<String, f32> = HashMap::new();
-    for session in sessions {
+    for session in &sessions {
         // filter to only sessions in the facility
         if !position_in_facility_airspace(config, &session.callsign) {
             continue;
@@ -209,7 +240,7 @@ async fn true_up_single_activity(
             // Simply unreasonable unless someone is doing a 24-hour run lol
             // But we have the manual adjustments to use to correct these
             warn!("Controller {cid} has {seconds} seconds in month {month}; skipping");
-            if let Err(e) = notify_bugged_session(config, db, cid, &session).await {
+            if let Err(e) = notify_bugged_session(config, db, cid, session).await {
                 error!("Error sending bugged-session notification: {e}");
             }
             continue;
@@ -256,12 +287,18 @@ async fn true_up_single_activity(
     }
 
     // include in-progress session time for currently-online controllers so
-    // this rewrite of the current month doesn't dip below the spot-update value
-    if let Some(secs) = online_seconds.get(&cid) {
+    // this rewrite of the current month doesn't dip below the spot-update
+    // value, unless the connection has ended since the feed was fetched
+    if let Some(connections) = online.get(&cid) {
+        let secs: i64 = connections
+            .iter()
+            .filter(|(connection, _)| !connection_completed(&sessions, connection))
+            .map(|(_, secs)| secs)
+            .sum();
         seconds_map
             .entry(source.now().format("%Y-%m").to_string())
-            .and_modify(|acc| *acc += *secs as f32)
-            .or_insert(*secs as f32);
+            .and_modify(|acc| *acc += secs as f32)
+            .or_insert(secs as f32);
     }
 
     // clear the controller's existing records in prep for replacement
@@ -307,7 +344,7 @@ pub async fn true_up_all_controllers_activity(
         .unwrap()
         .format("%Y-%m-01")
         .to_string();
-    let online_seconds = match online_controller_seconds(source, config).await {
+    let online = match online_connections(source, config).await {
         Ok(map) => map,
         Err(e) => {
             warn!("Could not get live VATSIM data for activity true-up: {e}");
@@ -318,8 +355,7 @@ pub async fn true_up_all_controllers_activity(
         let cid: u32 = row.try_get("cid").expect("no 'cid' column");
         debug!("Getting activity for {cid}");
         if let Err(e) =
-            true_up_single_activity(source, config, db, &five_months_ago, cid, &online_seconds)
-                .await
+            true_up_single_activity(source, config, db, &five_months_ago, cid, &online).await
         {
             error!("Error updating activity for {cid}: {e}");
         }
@@ -331,9 +367,9 @@ pub async fn true_up_all_controllers_activity(
 
 /// Updates a single controller's activity just this month.
 ///
-/// `logon_time` is the VATSIM logon time of the controller's current
-/// connection, or `None` when reconciling one that has gone offline (only
-/// completed sessions are counted then). Returns whether the activity row
+/// `connection` is the controller's current connection from the live feed,
+/// or `None` when reconciling one that has gone offline (only completed
+/// sessions are counted then). Returns whether the activity row
 /// was written: an offline reconcile that would reduce the stored minutes —
 /// meaning the just-ended session likely hasn't finalized in the API yet —
 /// is skipped instead of written, unless `allow_regress` is set (used when
@@ -345,14 +381,14 @@ async fn update_single_activity(
     db: &Pool<Sqlite>,
     start_of_month: &str,
     cid: u64,
-    logon_time: Option<&str>,
+    connection: Option<&Controller>,
     allow_regress: bool,
 ) -> Result<bool> {
     let year_and_month = &start_of_month[..7];
 
     let sessions = source.atc_sessions(cid, start_of_month).await?;
     let mut counter = 0.0;
-    for session in sessions {
+    for session in &sessions {
         if !position_in_facility_airspace(config, &session.callsign) {
             continue;
         }
@@ -388,13 +424,16 @@ async fn update_single_activity(
     let now = source.now();
     let month_start =
         DateTime::parse_from_rfc3339(&format!("{start_of_month}T00:00:00Z"))?.timestamp();
-    let online_seconds = match logon_time {
-        Some(logon_time) => clamped_online_seconds(logon_time, &now, month_start)?,
-        None => 0,
+    let online_seconds = match connection {
+        // the connection may have ended since the feed was fetched
+        Some(connection) if !connection_completed(&sessions, connection) => {
+            clamped_online_seconds(&connection.logon_time, &now, month_start)?
+        }
+        _ => 0,
     };
     let minutes = ((counter + adjustment_seconds + online_seconds as f32) / 60.0).round() as u32;
 
-    if logon_time.is_none() && !allow_regress {
+    if connection.is_none() && !allow_regress {
         // a session only appears in the API once it ends; if the just-ended
         // session hasn't finalized yet, this recompute would regress the
         // stored minutes, so skip the write and let the caller retry
@@ -546,7 +585,7 @@ pub async fn update_online_controller_activity(
             db,
             &start_of_month,
             cid,
-            Some(&controller.logon_time),
+            Some(controller),
             false,
         )
         .await
@@ -1250,5 +1289,65 @@ mod tests {
                 ("2026-10".to_string(), 814),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn test_true_up_skips_online_time_already_in_sessions() {
+        // the feed is fetched once at the start of the sweep; by the time the
+        // sweep reaches this controller, their connection has ended and
+        // landed in the sessions API
+        let db = test_db().await;
+        add_controller(&db, 123, true).await;
+        let mut vatsim = MockVatsim::at("2026-10-03T03:00:00Z");
+        vatsim.online = vec![online(123, "DEN_APP", "2026-10-03T00:00:00.477022Z")];
+        vatsim.sessions.insert(
+            123,
+            vec![
+                session("DEN_CTR", "2026-10-01T03:00:00", "60.0"),
+                session("DEN_APP", "2026-10-03T00:00:00", "181.0"),
+            ],
+        );
+
+        true_up_all_controllers_activity(&vatsim, &test_config(), &db)
+            .await
+            .unwrap();
+
+        // not another 180m online on top
+        assert_eq!(stored_minutes(&db, 123, "2026-10").await, Some(241));
+    }
+
+    #[tokio::test]
+    async fn test_spot_update_skips_online_time_already_in_sessions() {
+        let db = test_db().await;
+        add_controller(&db, 123, true).await;
+        let mut vatsim = MockVatsim::at("2026-09-15T12:00:00Z");
+        // still in the feed, but the connection has already ended
+        vatsim.online = vec![online(123, "DEN_CTR", "2026-09-15T10:00:00.477022Z")];
+        vatsim.sessions.insert(
+            123,
+            vec![session("DEN_CTR", "2026-09-15T10:00:00", "119.0")],
+        );
+
+        tick(&vatsim, &db, &Mutex::default()).await;
+
+        assert_eq!(stored_minutes(&db, 123, "2026-09").await, Some(119));
+    }
+
+    #[tokio::test]
+    async fn test_spot_update_counts_online_time_after_reconnect() {
+        let db = test_db().await;
+        add_controller(&db, 123, true).await;
+        let mut vatsim = MockVatsim::at("2026-09-15T12:00:00Z");
+        vatsim.online = vec![online(123, "DEN_CTR", "2026-09-15T11:00:05.123456Z")];
+        // a brief connection on the same position just before reconnecting
+        vatsim.sessions.insert(
+            123,
+            vec![session("DEN_CTR", "2026-09-15T10:59:50", "0.166667")],
+        );
+
+        tick(&vatsim, &db, &Mutex::default()).await;
+
+        // 10s session + 59m55s online
+        assert_eq!(stored_minutes(&db, 123, "2026-09").await, Some(60));
     }
 }
