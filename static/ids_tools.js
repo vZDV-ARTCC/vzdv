@@ -20,7 +20,7 @@
     tick();
   }
 
-  // Show the charts whose names contain every word typed, opening the groups with matches.
+  // Show the charts whose names contain every word typed, hiding the groups without matches.
   function filterCharts(container, query) {
     const words = query.toUpperCase().split(/\s+/).filter(Boolean);
     let total = 0;
@@ -33,7 +33,7 @@
         if (match) matches++;
       }
       group.hidden = matches === 0;
-      group.open = words.length > 0 && matches > 0;
+      if (matches) group.open = true;
       total += matches;
     }
     const empty = container.querySelector("[data-chart-empty]");

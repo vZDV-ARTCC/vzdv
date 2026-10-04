@@ -73,8 +73,10 @@ test("clock ticks just after each second", () => {
   assert.equal(delays[1], 1000);
 });
 
-test("chart filter matches every word and opens groups with matches", () => {
+test("chart filter matches every word and hides groups without matches", () => {
   const { container, groups, empty } = chartList();
+  // a group collapsed by hand opens again when it has matches
+  groups[1].open = false;
 
   filterCharts(container, "ils 16r");
   assert.deepEqual(visibleNames(groups[1]), ["ILS OR LOC RWY 16R"]);
@@ -91,10 +93,10 @@ test("chart filter matches every word and opens groups with matches", () => {
   assert.equal(groups[1].hidden, true);
   assert.equal(empty.hidden, false);
 
-  // clearing shows everything again, collapsed
+  // clearing shows everything again, expanded
   filterCharts(container, "");
   assert.deepEqual(visibleNames(groups[0]), ["BAYLR SIX (RNAV)", "PLAINS TWO"]);
   assert.equal(visibleNames(groups[1]).length, 3);
-  assert.equal(groups.every((group) => !group.hidden && !group.open), true);
+  assert.equal(groups.every((group) => !group.hidden && group.open), true);
   assert.equal(empty.hidden, true);
 });

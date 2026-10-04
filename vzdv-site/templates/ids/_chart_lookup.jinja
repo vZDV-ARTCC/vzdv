@@ -15,7 +15,7 @@
 {% if charts.groups %}
 <input type="search" class="form-control form-control-sm my-2" placeholder="Filter, e.g. ILS 16R" aria-label="Filter charts" autocomplete="off" data-chart-filter>
 {% for group in charts.groups %}
-<details data-chart-group>
+<details data-chart-group open>
   <summary class="small">{{ group.label }} <span class="text-muted">{{ group.charts|length }}</span></summary>
   <ul class="list-unstyled small ms-3 mb-2">
     {% for chart in group.charts %}

@@ -338,12 +338,22 @@ mod tests {
         assert_eq!(metric.wind.as_deref(), Some("290@5"));
         assert_eq!(metric.altimeter.as_deref(), Some("Q1027"));
 
-        let unreadable = summarize_metar("KXYZ 041850Z /////KT");
-        assert_eq!(unreadable.wind, None);
-        assert_eq!(
-            unreadable.raw_metar.as_deref(),
-            Some("KXYZ 041850Z /////KT")
+        // KDEN's report on 2026-09-15 with a space inside its wind group
+        let split = summarize_metar(
+            "KDEN 151453Z 35005 KT 10SM BKN037 BKN080 14/01 A3032 RMK AO2 SLP203 T01390006 51020",
         );
+        assert_eq!(split.conditions.as_deref(), Some("VFR"));
+        assert_eq!(split.wind.as_deref(), Some("350@5"));
+        assert_eq!(split.altimeter.as_deref(), Some("30.32"));
+
+        // a missing wind doesn't stop the rest from being read
+        let no_wind = summarize_metar("KXYZ 041850Z AUTO /////KT 10SM CLR 15/05 A3001");
+        assert_eq!(no_wind.conditions.as_deref(), Some("VFR"));
+        assert_eq!(no_wind.altimeter.as_deref(), Some("30.01"));
+
+        let blank = summarize_metar("");
+        assert_eq!(blank.wind, None);
+        assert_eq!(blank.raw_metar.as_deref(), Some(""));
     }
 
     #[test]
