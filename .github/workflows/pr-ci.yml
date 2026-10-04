@@ -36,4 +36,4 @@ jobs:
           node-version: 22
 
       - name: JS Tests
-        run: node --test vzdv-site/js-tests/ids_page.test.js
+        run: node --test vzdv-site/js-tests/ids_page.test.js vzdv-site/js-tests/ids_tools.test.js

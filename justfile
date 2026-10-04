@@ -6,7 +6,7 @@ build:
   cargo t
 
 test-js:
-  node --test vzdv-site/js-tests/ids_page.test.js
+  node --test vzdv-site/js-tests/ids_page.test.js vzdv-site/js-tests/ids_tools.test.js
 
 build-release:
   cargo b --release --all-features

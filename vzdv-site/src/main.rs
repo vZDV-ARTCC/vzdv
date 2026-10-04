@@ -266,6 +266,7 @@ async fn main() {
         sectors_config,
         ids_config,
         ids_cache: endpoints::ids::IdsCache::default(),
+        ids_lookups: endpoints::ids_lookup::LookupCache::default(),
         vatis_keys: vatis_jwt::VatisKeys::default(),
         db: db.clone(),
         templates,

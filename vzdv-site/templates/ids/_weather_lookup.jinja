@@ -1,0 +1,11 @@
+{% import "ids/_macros.jinja" as ids %}
+{% if weather %}
+<div class="d-flex flex-wrap align-items-baseline gap-2">
+  <strong>{{ weather.icao }}</strong>
+  {% if weather.conditions %}{{ ids.conditions_badge(weather.conditions) }}{% endif %}
+  <span>{{ [weather.wind, weather.altimeter]|select|join(" · ") }}</span>
+</div>
+<p class="font-monospace small mt-1 mb-0">{{ weather.raw_metar }}</p>
+{% else %}
+<p class="text-muted small mb-0">No METAR for {{ ident }}.</p>
+{% endif %}

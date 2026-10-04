@@ -26,7 +26,7 @@
   <body style="background-color: #212529">
     {% block above_nav %}{% endblock %}
     <nav class="navbar navbar-expand-lg bg-body-tertiary shadow-sm mb-3">
-      <div class="container-md">
+      <div class="{% block nav_container_class %}container-md{% endblock %}">
         <a class="navbar-brand" href="/">vZDV</a>
         <button
           class="navbar-toggler"
@@ -161,7 +161,7 @@
         {% endfor %}
       </div>
     {% endif %}
-    <div class="container" style="min-height: 85vh">{% block body %}{% endblock %}</div>
+    <div class="{% block container_class %}container{% endblock %}" style="min-height: 85vh">{% block body %}{% endblock %}</div>
 
     <div class="mt-5">
       <div class="container">

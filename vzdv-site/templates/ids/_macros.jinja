@@ -22,5 +22,57 @@
 
 {% macro status(updated_at, updated_z, warning) %}
 <p id="ids-status" class="{% if warning %}text-warning{% else %}text-muted{% endif %}">Snapshot updated: <time id="ids-updated" datetime="{{ updated_at }}">{{ updated_z }}</time></p>
+{% endmacro %}
+
+{% macro warning_alert(warning) %}
 <p id="ids-warning" class="alert alert-warning" role="status"{% if not warning %} hidden{% endif %}>{% if warning %}{{ warning }} Displaying last available data; it may be stale.{% endif %}</p>
+{% endmacro %}
+
+{# Page styles; goes in the `extra_head` block. #}
+{% macro styles() %}
+<style>
+  #ids-page [hidden] { display: none !important; }
+  #ids-status { margin-bottom: 0; }
+  #ids-tools summary { cursor: pointer; }
+  @media (min-width: 1200px) {
+    #ids-tools { border-left: 1px solid var(--bs-border-color-translucent); padding-left: 1.5rem; }
+  }
+</style>
+{% endmacro %}
+
+{# Title, snapshot status and Zulu clock across the top of each IDS page. #}
+{% macro header(title, updated_at, updated_z, warning) %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-3">
+  <div>
+    <h2 class="mb-1">{{ title }}</h2>
+    {{ status(updated_at, updated_z, warning) }}
+  </div>
+  <div class="text-end">
+    <div id="ids-clock" class="font-monospace fs-3 lh-1" role="timer" aria-label="Zulu time">--:--:--Z</div>
+    <div id="ids-date" class="font-monospace small text-muted"></div>
+  </div>
+</div>
+{{ warning_alert(warning) }}
+{% endmacro %}
+
+{# Weather and chart lookups beside the main content. #}
+{% macro tools(charts_icao="") %}
+<aside id="ids-tools" class="vstack gap-4">
+  <section>
+    <h5>Weather</h5>
+    <form id="ids-weather-form" class="input-group input-group-sm" hx-get="/ids/lookup/weather" hx-target="#ids-weather-result" hx-disabled-elt="find button">
+      <input type="text" name="icao" class="form-control font-monospace text-uppercase" placeholder="ICAO" aria-label="Airport for the METAR" required minlength="3" maxlength="4" pattern="[A-Za-z0-9]{3,4}" autocomplete="off" spellcheck="false">
+      <button type="submit" class="btn btn-outline-secondary">METAR</button>
+    </form>
+    <div id="ids-weather-result" class="mt-2" aria-live="polite"></div>
+  </section>
+  <section>
+    <h5>Charts</h5>
+    <form id="ids-charts-form" class="input-group input-group-sm" hx-get="/ids/lookup/charts" hx-target="#ids-charts-result" hx-disabled-elt="find button"{% if charts_icao %} hx-trigger="submit, load"{% endif %}>
+      <input type="text" name="icao" value="{{ charts_icao }}" class="form-control font-monospace text-uppercase" placeholder="ICAO" aria-label="Airport for charts" required minlength="3" maxlength="4" pattern="[A-Za-z0-9]{3,4}" autocomplete="off" spellcheck="false">
+      <button type="submit" class="btn btn-outline-secondary">Charts</button>
+    </form>
+    <div id="ids-charts-result" class="mt-2" aria-live="polite"></div>
+  </section>
+</aside>
 {% endmacro %}

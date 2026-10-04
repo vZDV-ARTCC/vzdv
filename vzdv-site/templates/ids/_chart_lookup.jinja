@@ -1,0 +1,31 @@
+{% if not charts %}
+<p class="text-muted small mb-0">No charts found for {{ ident }}.</p>
+{% else %}
+<div class="d-flex justify-content-between align-items-baseline gap-2">
+  <strong>{{ charts.ident }}</strong>
+  <span class="text-muted small text-nowrap">AIRAC {{ cycle }}</span>
+</div>
+<div class="text-muted small">{{ [charts.name, charts.location]|select|join(" · ") }}</div>
+{% if awaiting_cycle %}
+<p class="small text-warning mb-0">Cycle {{ awaiting_cycle }} isn't available yet; these are from {{ cycle }}.</p>
+{% endif %}
+{% for chart in charts.diagrams %}
+<a class="d-block small mt-1" href="{{ chart.url }}" target="_blank" rel="noopener">{{ chart.name }}</a>
+{% endfor %}
+{% if charts.groups %}
+<input type="search" class="form-control form-control-sm my-2" placeholder="Filter, e.g. ILS 16R" aria-label="Filter charts" autocomplete="off" data-chart-filter>
+{% for group in charts.groups %}
+<details data-chart-group>
+  <summary class="small">{{ group.label }} <span class="text-muted">{{ group.charts|length }}</span></summary>
+  <ul class="list-unstyled small ms-3 mb-2">
+    {% for chart in group.charts %}
+    <li data-chart-name="{{ chart.name }}"><a href="{{ chart.url }}" target="_blank" rel="noopener">{{ chart.name }}</a></li>
+    {% endfor %}
+  </ul>
+</details>
+{% endfor %}
+<p class="text-muted small mb-0" data-chart-empty hidden>No matching charts.</p>
+{% elif not charts.diagrams %}
+<p class="text-muted small mb-0">No charts published for {{ charts.ident }}.</p>
+{% endif %}
+{% endif %}

@@ -21,6 +21,7 @@ use std::{
 
 pub mod activity;
 pub mod aviation;
+pub mod charts;
 pub mod config;
 pub mod db;
 pub mod email;

@@ -188,6 +188,8 @@ pub struct AppState {
     /// IDS config
     pub ids_config: ConfigIDS,
     pub ids_cache: crate::endpoints::ids::IdsCache,
+    /// Recent IDS weather and chart lookups
+    pub ids_lookups: crate::endpoints::ids_lookup::LookupCache,
     /// Keys for checking vATIS IDS update tokens
     pub vatis_keys: crate::vatis_jwt::VatisKeys,
     /// Access to the DB

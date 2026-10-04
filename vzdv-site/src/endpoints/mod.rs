@@ -31,6 +31,7 @@ pub mod events;
 pub mod facility;
 pub mod homepage;
 pub mod ids;
+pub mod ids_lookup;
 pub mod user;
 
 /// 404 not found page.

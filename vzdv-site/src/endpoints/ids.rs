@@ -245,15 +245,15 @@ impl FlowSummary {
 
 /// An airport's current weather for display.
 #[derive(Debug, Clone, Serialize, Default)]
-struct WeatherSummary {
-    conditions: Option<String>,
-    wind: Option<String>,
-    altimeter: Option<String>,
-    raw_metar: Option<String>,
+pub(crate) struct WeatherSummary {
+    pub(crate) conditions: Option<String>,
+    pub(crate) wind: Option<String>,
+    pub(crate) altimeter: Option<String>,
+    pub(crate) raw_metar: Option<String>,
 }
 
 impl WeatherSummary {
-    fn new(weather: Option<&AirportWeather>) -> Self {
+    pub(crate) fn new(weather: Option<&AirportWeather>) -> Self {
         let Some(weather) = weather else {
             return Self::default();
         };
@@ -717,7 +717,7 @@ pub async fn refresh_snapshots(state: Arc<AppState>) {
     }
 }
 
-fn roster_access(user_info: &Option<UserInfo>) -> Result<(), StatusCode> {
+pub(crate) fn roster_access(user_info: &Option<UserInfo>) -> Result<(), StatusCode> {
     match user_info {
         Some(user) if user.on_roster => Ok(()),
         Some(_) => Err(StatusCode::FORBIDDEN),
@@ -837,6 +837,7 @@ pub fn router() -> Router<Arc<AppState>> {
             post(receive_vatis_post).layer(DefaultBodyLimit::max(64 * 1024)),
         )
         .route("/ids/vatis/current", get(show_atis_data))
+        .merge(super::ids_lookup::router())
         .layer(axum::middleware::map_response(
             |mut response: Response| async move {
                 response.headers_mut().insert(
@@ -849,7 +850,7 @@ pub fn router() -> Router<Arc<AppState>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::vatis_jwt::{
         VatisKeys,
@@ -863,7 +864,7 @@ mod tests {
     use tower::ServiceExt;
     use tower_sessions::MemoryStore;
 
-    fn user(on_roster: bool, is_home: bool) -> UserInfo {
+    pub(crate) fn user(on_roster: bool, is_home: bool) -> UserInfo {
         UserInfo {
             cid: 123,
             first_name: "Test".into(),
@@ -878,7 +879,7 @@ mod tests {
         }
     }
 
-    fn session() -> Session {
+    pub(crate) fn session() -> Session {
         Session::new(None, Arc::new(MemoryStore::default()), None)
     }
 
@@ -904,6 +905,7 @@ mod tests {
             sectors_config: serde_json::from_str(include_str!("../../../splits.json")).unwrap(),
             ids_config: serde_json::from_str(include_str!("../../../ids.json")).unwrap(),
             ids_cache: IdsCache::default(),
+            ids_lookups: crate::endpoints::ids_lookup::LookupCache::default(),
             vatis_keys: VatisKeys::from_jwks(TEST_JWKS),
             db,
             templates,
@@ -921,7 +923,7 @@ mod tests {
         state
     }
 
-    async fn state() -> Arc<AppState> {
+    pub(crate) async fn state() -> Arc<AppState> {
         state_with(VatisJwtMode::Log).await
     }
 
@@ -933,7 +935,7 @@ mod tests {
         );
     }
 
-    async fn register_user(state: &AppState, on_roster: bool, home: &str) {
+    pub(crate) async fn register_user(state: &AppState, on_roster: bool, home: &str) {
         sqlx::query(sql::INSERT_USER_SIMPLE)
             .bind(123)
             .bind("Test")
@@ -964,7 +966,7 @@ mod tests {
             .unwrap()
     }
 
-    async fn request(state: &Arc<AppState>, session: &Session, path: &str) -> Response {
+    pub(crate) async fn request(state: &Arc<AppState>, session: &Session, path: &str) -> Response {
         send(
             state,
             session,
@@ -1004,7 +1006,7 @@ mod tests {
             .unwrap()
     }
 
-    async fn body_text(response: Response) -> String {
+    pub(crate) async fn body_text(response: Response) -> String {
         String::from_utf8(
             to_bytes(response.into_body(), 1_000_000)
                 .await
@@ -1122,6 +1124,7 @@ mod tests {
                 assert_eq!(response.status(), StatusCode::OK);
                 let html = body_text(response).await;
                 assert!(html.contains("/static/ids_page.js"));
+                assert!(html.contains("/static/ids_tools.js"));
                 assert!(html.contains(&format!("id=\"{template}\"")), "{path}");
             }
             sqlx::query(sql::SET_CONTROLLER_ON_ROSTER)
@@ -1259,7 +1262,7 @@ mod tests {
         assert!(html.contains("ids-atis-template"));
     }
 
-    /// Every element static/ids_page.js updates exists in the rendered pages.
+    /// Every element static/ids_page.js and ids_tools.js use exists in the rendered pages.
     #[tokio::test]
     async fn templates_have_every_element_the_script_updates() {
         let state = state().await;
@@ -1273,7 +1276,18 @@ mod tests {
                 .render(ctx)
                 .unwrap()
         };
-        let common = ["ids-page", "ids-status", "ids-warning", "ids-updated"];
+        let common = [
+            "ids-page",
+            "ids-status",
+            "ids-warning",
+            "ids-updated",
+            "ids-clock",
+            "ids-date",
+            "ids-tools",
+            "ids-charts-form",
+            "ids-charts-result",
+            "ids-weather-result",
+        ];
         let overview = render(
             "ids/base.jinja",
             context! { rows => snapshot.rows.clone(), updated_at => "" },
