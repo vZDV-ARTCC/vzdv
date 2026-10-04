@@ -512,7 +512,6 @@ struct UpdatedEventData {
     banner: String,
     start: String,
     end: String,
-    timezone: String,
 }
 
 /// Submit a form to update an event, and redirect back to the same page.
@@ -580,15 +579,12 @@ async fn post_edit_event_form(
             "end" => {
                 event.end = field.text().await?;
             }
-            "timezone" => {
-                event.timezone = field.text().await?;
-            }
             _ => {}
         }
     }
 
-    let start = js_timestamp_to_utc(&event.start, &event.timezone)?;
-    let end = js_timestamp_to_utc(&event.end, &event.timezone)?;
+    let start = js_timestamp_to_utc(&event.start, "UTC")?;
+    let end = js_timestamp_to_utc(&event.end, "UTC")?;
 
     sqlx::query(sql::UPDATE_EVENT)
         .bind(id)

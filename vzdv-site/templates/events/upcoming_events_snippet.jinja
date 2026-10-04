@@ -10,9 +10,7 @@
           <i class="bi bi-arrow-right-short"></i>
         </a>
       </h4>
-      <p class="mb-1">
-        <span class="d-none event-time">{{ event.start }} -- {{ event.end }}</span>
-      </p>
+      <p class="mb-1 event-time-range" data-start="{{ event.start }}" data-end="{{ event.end }}"></p>
       <a href="/events/{{ event.id }}">
         <img src="{{ event.image_url }}" alt="Event banner" class="img-fluid" style="width: 100%" />
       </a>
@@ -20,12 +18,4 @@
   {% endfor %}
 {% endif %}
 
-<script defer>
-  const opts = { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: 'numeric' };
-  document.querySelectorAll('.event-time').forEach((element) => {
-    const parts = element.innerText.split(' -- ')
-    const start = new Date(parts[0]).toLocaleDateString('en-US', opts);
-    const end = new Date(parts[1]).toLocaleDateString('en-US', opts);
-    element.parentElement.innerText = `${start} - ${end}`;
-  });
-</script>
+<script defer src="/static/event_times.js"></script>

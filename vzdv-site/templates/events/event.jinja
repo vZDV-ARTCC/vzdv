@@ -4,6 +4,7 @@
 
 {% block body %}
 
+<script defer src="/static/event_times.js"></script>
 <script defer src="/static/event_page.js"></script>
 <script defer src="/static/sorttable.js"></script>
 
@@ -173,7 +174,6 @@
   <form action="/events/{{ event.id }}" method="POST" enctype="multipart/form-data">
     <div class="row">
       <div class="col">
-        <input type="hidden" name="timezone" id="input-timezone">
         <div class="mb-3">
           <label for="name" class="form-label">Event name</label>
           <input type="text" class="form-control" name="name" value="{{ event.name }}" required>
@@ -201,12 +201,12 @@
         </div>
         <div class="row mb-3">
           <div class="col">
-            <label for="start" class="form-label">Start</label>
-            <input type="datetime-local" name="start" id="editFormStart" class="form-control" required>
+            <label for="start" class="form-label">Start (Zulu)</label>
+            <input type="datetime-local" name="start" id="editFormStart" class="form-control" data-zulu-input required>
           </div>
           <div class="col">
-            <label for="end" class="form-label">End</label>
-            <input type="datetime-local" name="end" id="editFormEnd" class="form-control" required>
+            <label for="end" class="form-label">End (Zulu)</label>
+            <input type="datetime-local" name="end" id="editFormEnd" class="form-control" data-zulu-input required>
           </div>
         </div>
         <div class="d-flex justify-content-between">

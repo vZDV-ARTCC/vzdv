@@ -18,6 +18,7 @@
   {% endif %}
 </div>
 
+{# the snippet also loads event_times.js, which adds the create form's Zulu previews #}
 {% include 'events/upcoming_events_snippet.jinja' %}
 
 <dialog id="modalNewForm">
@@ -47,11 +48,11 @@
         <div class="row mb-3">
           <div class="col">
             <label for="start" class="form-label">Start (Zulu)</label>
-            <input type="datetime-local" name="start" class="form-control" required>
+            <input type="datetime-local" name="start" class="form-control" data-zulu-input required>
           </div>
           <div class="col">
             <label for="end" class="form-label">End (Zulu)</label>
-            <input type="datetime-local" name="end" class="form-control" required>
+            <input type="datetime-local" name="end" class="form-control" data-zulu-input required>
           </div>
         </div>
         <div class="d-flex justify-content-between">
@@ -72,7 +73,6 @@
     e.preventDefault();
     document.getElementById('modalNewForm').close();
   });
-  document.getElementById('input-timezone').value = Intl.DateTimeFormat().resolvedOptions().timeZone;
 </script>
 
 {% endblock %}
