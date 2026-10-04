@@ -17,6 +17,7 @@ pub enum SectorOrArea {
 pub struct SectorSplit {
     pub high: SectorConsolidation,
     pub low: SectorConsolidation,
+    pub color_code_by_area: Option<bool>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
