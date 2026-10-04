@@ -22,7 +22,7 @@ use std::{sync::Arc, time::Duration};
 use tower_sessions::Session;
 use vzdv::{
     GENERAL_HTTP_CLIENT,
-    aviation::parse_metar,
+    aviation::{highlight_metar, parse_metar},
     charts::{AirportCharts, ChartCycle, fetch_airport_charts},
 };
 
@@ -131,6 +131,7 @@ fn summarize_metar(metar: &str) -> WeatherSummary {
     let Ok(weather) = parse_metar(metar) else {
         return WeatherSummary {
             raw_metar: Some(metar.to_string()),
+            metar_parts: highlight_metar(metar),
             ..Default::default()
         };
     };
@@ -435,6 +436,20 @@ mod tests {
             }),
         );
         state.ids_lookups.weather.insert("ZZZ".into(), None);
+        state.ids_lookups.weather.insert(
+            "KCOS".into(),
+            Some(WeatherLookup {
+                icao: "KCOS".into(),
+                summary: summarize_metar("KCOS 041854Z 15017KT 1 1/2SM BR OVC008 A3044"),
+            }),
+        );
+        let html =
+            body_text(request(&state, &session, "/ids/lookup/weather?icao=KCOS").await).await;
+        assert!(html.contains("IFR"), "{html}");
+        assert!(
+            html.contains("15017KT <span class=\"metar-ifr\" title=\"IFR\">1 1&#x2f;2SM</span> BR <span class=\"metar-ifr\" title=\"IFR\">OVC008</span> A3044"),
+            "{html}"
+        );
         let html = body_text(request(&state, &session, "/ids/lookup/weather?icao=den").await).await;
         assert!(html.contains("KDEN 041853Z"), "{html}");
         assert!(html.contains("220@13 · 30.34"), "{html}");

@@ -20,6 +20,13 @@
 <span{% if field %} data-field="{{ field }}"{% endif %}{% if id %} id="{{ id }}"{% endif %} class="{{ classes[conditions] if conditions in classes else 'text-muted' }}"{% if conditions == 'LIFR' %} style="background-color: purple;"{% endif %}>{{ conditions if conditions in classes else '—' }}</span>
 {%- endmacro %}
 
+{# A METAR with its below-VFR ceilings and visibilities highlighted; static/ids_page.js renders the same. #}
+{% macro metar_text(parts) -%}
+{%- for part in parts -%}
+{%- if part.conditions -%}<span class="metar-{{ part.conditions|lower }}" title="{{ part.conditions }}">{{ part.text }}</span>{%- else -%}{{ part.text }}{%- endif -%}
+{%- endfor -%}
+{%- endmacro %}
+
 {% macro status(updated_at, updated_z, warning) %}
 <p id="ids-status" class="{% if warning %}text-warning{% else %}text-muted{% endif %}">Snapshot updated: <time id="ids-updated" datetime="{{ updated_at }}">{{ updated_z }}</time></p>
 {% endmacro %}
@@ -34,6 +41,10 @@
   #ids-page [hidden] { display: none !important; }
   #ids-status { margin-bottom: 0; }
   #ids-tools summary { cursor: pointer; }
+  .metar-mvfr, .metar-ifr, .metar-lifr { font-weight: 600; }
+  .metar-mvfr { color: var(--bs-info-text-emphasis); }
+  .metar-ifr { color: var(--bs-danger-text-emphasis); }
+  .metar-lifr { color: #e599f7; }
   @media (min-width: 1200px) {
     #ids-tools { border-left: 1px solid var(--bs-border-color-translucent); padding-left: 1.5rem; }
   }

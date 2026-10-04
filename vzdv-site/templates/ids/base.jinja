@@ -11,15 +11,15 @@
 <tr data-key="{{ row.icao or '' }}">
   <td class="text-nowrap">
     <strong><a data-field="airport-link" href="/ids/{{ row.icao }}">{{ row.icao }}</a></strong>
-    <button type="button" class="btn btn-link btn-sm p-0 ms-1 link-secondary" data-action="charts" title="Show charts" aria-label="Show charts"><i class="bi bi-file-earmark-text"></i></button>
+    <button type="button" class="btn btn-link py-0 px-1 ms-1 link-body-emphasis" data-field="charts" data-action="charts" title="Show {{ row.icao }} charts" aria-label="Show {{ row.icao }} charts"><i class="bi bi-file-earmark-text" aria-hidden="true"></i></button>
   </td>
   <td>
     <span data-field="dep_rwys"{% if not row.dep_rwys %} class="text-muted"{% endif %}>{{ row.dep_rwys or "—" }}</span>
-    {{- ids.source_badge(row.dep_source, row.match_icao, field="dep_source") }}
+    {{- ids.source_badge("atis" if row.dep_source == "atis" else none, none, field="dep_source") }}
   </td>
   <td>
     <span data-field="arr_rwys"{% if not row.arr_rwys %} class="text-muted"{% endif %}>{{ row.arr_rwys or "—" }}</span>
-    {{- ids.source_badge(row.arr_source, row.match_icao, field="arr_source") }}
+    {{- ids.source_badge("atis" if row.arr_source == "atis" else none, none, field="arr_source") }}
   </td>
   <td>
     <span data-field="split"{% if not row.is_split %} hidden{% endif %}>
@@ -35,7 +35,7 @@
   <td>{{ ids.conditions_badge(row.conditions, field="conditions") }}</td>
   <td><span data-field="wind"{% if not row.wind %} class="text-muted"{% endif %}>{{ row.wind or "—" }}</span></td>
   <td><span data-field="altimeter"{% if not row.altimeter %} class="text-muted"{% endif %}>{{ row.altimeter or "—" }}</span></td>
-  <td><span data-field="raw_metar" class="{% if row.raw_metar %}font-monospace small{% else %}text-muted{% endif %}">{{ row.raw_metar or "—" }}</span></td>
+  <td><span data-field="raw_metar" class="{% if row.raw_metar %}font-monospace small{% else %}text-muted{% endif %}">{% if row.raw_metar %}{{ ids.metar_text(row.metar_parts) }}{% else %}—{% endif %}</span></td>
 </tr>
 {% endmacro %}
 
@@ -70,9 +70,7 @@
       <h4 id="ids-airports-empty"{% if rows %} hidden{% endif %}>No IDS airport data configured</h4>
       <template id="ids-airports-template">{{ airport_row({}) }}</template>
       <p class="small text-muted">
-        Runway sources: {{ ids.source_badge("atis", none) }} online ATIS,
-        {{ ids.source_badge("matched", "KDEN") }} matched to another airport's flow,
-        {{ ids.source_badge("weather", none) }} estimated from the wind.
+        {{ ids.source_badge("atis", none) }} runways are from an online ATIS; the rest are estimated from the wind or matched to another airport's flow.
       </p>
     </div>
     <div class="col-12 col-xl-4 col-xxl-3">

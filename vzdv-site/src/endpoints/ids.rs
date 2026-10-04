@@ -31,7 +31,7 @@ use tokio::sync::{Mutex, Notify, RwLock};
 use tower_sessions::Session;
 use vatsim_utils::live_api::Vatsim;
 use vzdv::{
-    aviation::AirportWeather,
+    aviation::{AirportWeather, MetarPart, highlight_metar},
     config::{ConfigIDS, VatisJwtMode},
     ids::{AirportProcedure, AtisType, DepCorridor, FlowSide, FlowSource, ResolvedFlow},
     sql::{self, Atis},
@@ -250,6 +250,8 @@ pub(crate) struct WeatherSummary {
     pub(crate) wind: Option<String>,
     pub(crate) altimeter: Option<String>,
     pub(crate) raw_metar: Option<String>,
+    /// The METAR with its low ceilings and visibilities marked.
+    pub(crate) metar_parts: Vec<MetarPart>,
 }
 
 impl WeatherSummary {
@@ -267,6 +269,7 @@ impl WeatherSummary {
             }),
             altimeter: weather.altimeter.map(|a| format!("{a:.2}")),
             raw_metar: Some(weather.raw.clone()),
+            metar_parts: highlight_metar(&weather.raw),
         }
     }
 }
@@ -1231,6 +1234,36 @@ pub(crate) mod tests {
         );
         assert!(!html.contains("<img src=x"));
         assert!(html.contains("&lt;img"));
+        // the table only marks runways from an online ATIS
+        let html = render(
+            "ids/base.jinja",
+            context! { rows => snapshot.rows.clone(), updated_at => "" },
+        );
+        assert!(
+            snapshot
+                .rows
+                .iter()
+                .any(|row| row.flow.dep_source == Some(FlowSource::Weather))
+        );
+        assert!(
+            snapshot
+                .rows
+                .iter()
+                .any(|row| row.flow.dep_source == Some(FlowSource::Matched))
+        );
+        assert!(!html.contains(">EST<") && !html.contains(">MATCH<"));
+        assert!(html.contains("aria-label=\"Show KDEN charts\""));
+        let mut row = snapshot.rows[0].clone();
+        row.weather = WeatherSummary::new(Some(
+            &vzdv::aviation::parse_metar("KDEN 041853Z 22013KT 2SM BR OVC004 A3034").unwrap(),
+        ));
+        let html = render(
+            "ids/base.jinja",
+            context! { rows => vec![row], updated_at => "" },
+        );
+        assert!(html.contains(
+            "22013KT <span class=\"metar-ifr\" title=\"IFR\">2SM</span> BR <span class=\"metar-lifr\" title=\"LIFR\">OVC004</span> A3034"
+        ));
         let empty = render(
             "ids/base.jinja",
             context! {
@@ -1300,6 +1333,7 @@ pub(crate) mod tests {
         ];
         let overview_fields = [
             "airport-link",
+            "charts",
             "dep_rwys",
             "dep_source",
             "arr_rwys",

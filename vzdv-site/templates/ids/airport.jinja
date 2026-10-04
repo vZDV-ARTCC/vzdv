@@ -67,7 +67,7 @@
         <span id="ids-suggested-flow" class="badge {% if detail.suggestion_differs %}text-bg-warning{% else %}text-bg-info{% endif %}" title="Determined from the SOP rules and current winds">{% if detail.suggestion %}Suggested: {{ detail.suggestion }}{% endif %}</span>
       </div>
       <p class="mb-1">{{ ids.conditions_badge(detail.conditions, id="ids-conditions") }} <span id="ids-weather">{{ [detail.wind, detail.altimeter]|select|join(" · ") or "No METAR" }}</span></p>
-      <p id="ids-metar" class="font-monospace small"{% if not detail.raw_metar %} hidden{% endif %}>{{ detail.raw_metar or '' }}</p>
+      <p id="ids-metar" class="font-monospace small"{% if not detail.raw_metar %} hidden{% endif %}>{{ ids.metar_text(detail.metar_parts) }}</p>
 
       {% if detail.is_split %}
       <div class="row g-4 mb-3">

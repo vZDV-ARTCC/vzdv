@@ -5,7 +5,7 @@
   {% if weather.conditions %}{{ ids.conditions_badge(weather.conditions) }}{% endif %}
   <span>{{ [weather.wind, weather.altimeter]|select|join(" · ") }}</span>
 </div>
-<p class="font-monospace small mt-1 mb-0">{{ weather.raw_metar }}</p>
+<p class="font-monospace small mt-1 mb-0">{{ ids.metar_text(weather.metar_parts) }}</p>
 {% else %}
 <p class="text-muted small mb-0">No METAR for {{ ident }}.</p>
 {% endif %}

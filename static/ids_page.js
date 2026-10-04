@@ -65,18 +65,41 @@
     if (element.style.backgroundColor !== background) element.style.backgroundColor = background;
   }
 
+  // Render a METAR, highlighting its below-VFR ceilings and visibilities.
+  function updateMetar(element, parts, placeholder) {
+    const text = parts.map((part) => part.text).join("");
+    if (!text) return setText(element, placeholder);
+    if (element.textContent === text) return;
+    const document = element.ownerDocument;
+    element.replaceChildren(...parts.map((part) => {
+      if (!Object.hasOwn(CONDITION_BADGES, part.conditions)) return document.createTextNode(part.text);
+      const span = document.createElement("span");
+      span.className = `metar-${part.conditions.toLowerCase()}`;
+      span.title = part.conditions;
+      span.textContent = part.text;
+      return span;
+    }));
+  }
+
   function updateOverviewRow(row, data) {
     const link = field(row, "airport-link");
     setText(link, data.icao);
     setAttribute(link, "href", `/ids/${encodeURIComponent(data.icao)}`);
+    const charts = field(row, "charts");
+    setAttribute(charts, "title", `Show ${data.icao} charts`);
+    setAttribute(charts, "aria-label", `Show ${data.icao} charts`);
 
-    for (const key of ["dep_rwys", "arr_rwys", "wind", "altimeter", "raw_metar"]) {
+    for (const key of ["dep_rwys", "arr_rwys", "wind", "altimeter"]) {
       const element = field(row, key);
       setText(element, data[key] || "—");
-      setClass(element, data[key] ? (key === "raw_metar" ? "font-monospace small" : "") : "text-muted");
+      setClass(element, data[key] ? "" : "text-muted");
     }
-    updateSourceBadge(field(row, "dep_source"), data.dep_source, data.match_icao);
-    updateSourceBadge(field(row, "arr_source"), data.arr_source, data.match_icao);
+    const metar = field(row, "raw_metar");
+    updateMetar(metar, data.metar_parts, "—");
+    setClass(metar, data.metar_parts.length ? "font-monospace small" : "text-muted");
+    // the table only marks runways from an online ATIS
+    updateSourceBadge(field(row, "dep_source"), data.dep_source === "atis" ? "atis" : null, null);
+    updateSourceBadge(field(row, "arr_source"), data.arr_source === "atis" ? "atis" : null, null);
     setText(field(row, "atis_info"), data.atis_info);
 
     setHidden(field(row, "split"), !data.is_split);
@@ -129,18 +152,21 @@
     setOptionalText(element("issue"), detail.issue);
     updateConditions(element("conditions"), detail.conditions);
     setText(element("weather"), [detail.wind, detail.altimeter].filter(Boolean).join(" · ") || "No METAR");
-    setOptionalText(element("metar"), detail.raw_metar);
+    updateMetar(element("metar"), detail.metar_parts, "");
+    setHidden(element("metar"), !detail.metar_parts.length);
   }
 
   const isString = (value) => typeof value === "string";
   const nullableString = (value) => value === null || isString(value);
   const stringArray = (value) => Array.isArray(value) && value.every(isString);
+  const metarParts = (value) => Array.isArray(value) &&
+    value.every((part) => !!part && isString(part.text) && nullableString(part.conditions));
 
   const FLOW_FIELDS = ["dep_name", "arr_name", "dep_source", "arr_source", "match_icao", "suggestion",
     "conditions", "wind", "altimeter", "raw_metar", "issue"];
   const SHAPES = {
-    airport: { strings: ["icao", "dep_rwys", "arr_rwys", "atis_info"], nullable: FLOW_FIELDS, booleans: ["is_split"] },
-    detail: { strings: ["icao", "dep_rwys", "arr_rwys"], nullable: FLOW_FIELDS, booleans: ["is_split", "suggestion_differs"] },
+    airport: { strings: ["icao", "dep_rwys", "arr_rwys", "atis_info"], nullable: FLOW_FIELDS, booleans: ["is_split"], metar: ["metar_parts"] },
+    detail: { strings: ["icao", "dep_rwys", "arr_rwys"], nullable: FLOW_FIELDS, booleans: ["is_split", "suggestion_differs"], metar: ["metar_parts"] },
     dep: { strings: ["corridor", "direction", "rwy"], arrays: ["gates"] },
     arr: { strings: ["rwy"], arrays: ["gates"] },
     atis: { strings: ["atis_type", "label", "letter", "preset", "received", "age", "airport_conditions", "notams", "text_atis"] },
@@ -151,7 +177,8 @@
       (shape.strings || []).every((key) => isString(value[key])) &&
       (shape.nullable || []).every((key) => nullableString(value[key])) &&
       (shape.booleans || []).every((key) => typeof value[key] === "boolean") &&
-      (shape.arrays || []).every((key) => stringArray(value[key]));
+      (shape.arrays || []).every((key) => stringArray(value[key])) &&
+      (shape.metar || []).every((key) => metarParts(value[key]));
   }
 
   // Keyed, reconciled lists on each page. Elements are found by id:

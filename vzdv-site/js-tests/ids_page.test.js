@@ -2,8 +2,19 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { applySnapshot, startPolling, POLL_INTERVAL } = require("../../static/ids_page.js");
 
+// What new elements and text nodes are created by.
+const DOCUMENT = {
+  createElement: () => new Element(),
+  createTextNode(text) {
+    const node = new Element();
+    node._text = text;
+    return node;
+  },
+};
+
 class Element {
   constructor(attributes = {}) {
+    this.ownerDocument = DOCUMENT;
     this.attributes = { ...attributes };
     this.dataset = {};
     this.children = [];
@@ -31,6 +42,13 @@ class Element {
 
   setAttribute(name, value) {
     this.attributes[name] = value;
+  }
+
+  replaceChildren(...nodes) {
+    this.textWrites++;
+    this._text = "";
+    for (const child of [...this.children]) child.remove();
+    for (const node of nodes) this.appendChild(node);
   }
 
   appendChild(child) {
@@ -71,7 +89,7 @@ class Element {
   }
 }
 
-const OVERVIEW_FIELDS = ["airport-link", "dep_rwys", "dep_source", "arr_rwys", "arr_source", "split", "dep_name",
+const OVERVIEW_FIELDS = ["airport-link", "charts", "dep_rwys", "dep_source", "arr_rwys", "arr_source", "split", "dep_name",
   "arr_name", "flow_name", "suggestion", "issue", "atis_info", "conditions", "wind", "altimeter", "raw_metar"];
 const SECTION_FIELDS = {
   dep: ["direction", "rwy", "gates"],
@@ -123,7 +141,8 @@ function airport(icao = "KDEN", changes = {}) {
   return {
     icao, dep_rwys: "25", arr_rwys: "26", dep_name: "WEST", arr_name: "WEST", dep_source: "atis",
     arr_source: "weather", match_icao: null, suggestion: null, is_split: true, atis_info: "DEP A 1453Z",
-    conditions: "VFR", wind: "270@10", altimeter: "30.01", raw_metar: "KDEN 27010KT", issue: null,
+    conditions: "VFR", wind: "270@10", altimeter: "30.01", raw_metar: "KDEN 27010KT",
+    metar_parts: [{ text: "KDEN 27010KT", conditions: null }], issue: null,
     ...changes,
   };
 }
@@ -220,6 +239,7 @@ test("overview switches split flow, sources, issues, conditions, and membership 
   assert.equal(field(den, "arr_rwys").textContent, "—");
   assert.equal(field(den, "arr_source").hidden, true);
   assert.equal(field(den, "dep_source").textContent, "ATIS");
+  assert.equal(field(den, "charts").getAttribute("aria-label"), "Show KDEN charts");
   assert.equal(split.hidden, false);
   assert.equal(field(den, "arr_name").textContent, "ARR: —");
 
@@ -235,7 +255,8 @@ test("overview switches split flow, sources, issues, conditions, and membership 
   assert.equal(field(den, "conditions"), badge);
   assert.equal(badge.style.backgroundColor, "purple");
   assert.equal(field(den, "dep_name").textContent, "DEP: NORTH");
-  assert.equal(field(den, "arr_source").textContent, "EST");
+  // estimated and matched runways aren't marked in the table
+  assert.equal(field(den, "arr_source").hidden, true);
 
   applySnapshot(page, snapshot([airport("KDEN", {
     is_split: false, conditions: "IFR", dep_source: "matched", arr_source: "matched", match_icao: "KDEN",
@@ -245,8 +266,8 @@ test("overview switches split flow, sources, issues, conditions, and membership 
   assert.equal(field(den, "flow_name").textContent, "WEST");
   assert.equal(field(den, "suggestion").hidden, true);
   assert.equal(field(den, "airport-link").textContent, "KDEN");
-  assert.equal(field(den, "dep_source").textContent, "MATCH");
-  assert.equal(field(den, "dep_source").getAttribute("title"), "Matched to KDEN's flow");
+  assert.equal(field(den, "dep_source").hidden, true);
+  assert.equal(field(den, "dep_source").textContent, "");
   assert.equal(badge.style.backgroundColor, "");
   assert.equal(badge.className, "badge rounded-pill text-bg-danger");
 
@@ -256,9 +277,34 @@ test("overview switches split flow, sources, issues, conditions, and membership 
   assert.equal(page.querySelector("#ids-airports-empty").hidden, false);
 });
 
+test("METARs highlight low ceilings and visibilities and only rerender when they change", () => {
+  const page = fixture();
+  const ifr = [
+    { text: "KDEN 27010KT ", conditions: null }, { text: "2SM", conditions: "IFR" },
+    { text: " BR ", conditions: null }, { text: "OVC004", conditions: "LIFR" },
+  ];
+  applySnapshot(page, snapshot([airport("KDEN", { metar_parts: ifr })]));
+  const metar = field(page.querySelector("#ids-airports-rows").children[0], "raw_metar");
+  assert.equal(metar.textContent, "KDEN 27010KT 2SM BR OVC004");
+  assert.equal(metar.className, "font-monospace small");
+  assert.deepEqual(metar.children.map((child) => child.className), ["", "metar-ifr", "", "metar-lifr"]);
+  assert.equal(metar.children[1].title, "IFR");
+
+  const writes = textWrites(page);
+  applySnapshot(page, snapshot([airport("KDEN", { metar_parts: ifr })]));
+  assert.equal(textWrites(page), writes);
+
+  applySnapshot(page, snapshot([airport("KDEN", { raw_metar: null, metar_parts: [] })]));
+  assert.equal(metar.textContent, "—");
+  assert.equal(metar.className, "text-muted");
+  assert.equal(metar.children.length, 0);
+});
+
 test("detail sections keep row identity across corridor, gate, and ATIS changes", () => {
   const page = fixture("airport");
-  applySnapshot(page, detailSnapshot({ issue: "No METAR available", suggestion: null, wind: null, altimeter: null, raw_metar: null }));
+  applySnapshot(page, detailSnapshot({
+    issue: "No METAR available", suggestion: null, wind: null, altimeter: null, raw_metar: null, metar_parts: [],
+  }));
   assert.equal(page.querySelector("#ids-issue").hidden, false);
   assert.equal(page.querySelector("#ids-suggestion").hidden, true);
   assert.equal(page.querySelector("#ids-weather").textContent, "No METAR");
@@ -334,12 +380,19 @@ test("server strings are literal text, not markup or executable URLs", () => {
   const attack = '<img src=x onerror="alert(1)">';
   applySnapshot(page, snapshot([airport(attack, {
     issue: attack, raw_metar: attack, conditions: "__proto__", dep_source: "__proto__",
+    metar_parts: [{ text: attack, conditions: "IFR" }, { text: attack, conditions: "__proto__" }],
   })]));
   const row = page.querySelector("#ids-airports-rows").children[0];
-  for (const name of ["airport-link", "issue", "raw_metar"]) {
+  for (const name of ["airport-link", "issue"]) {
     assert.equal(field(row, name).textContent, attack);
     assert.equal(field(row, name).children.length, 0);
   }
+  const [highlight, plain] = field(row, "raw_metar").children;
+  assert.equal(highlight.className, "metar-ifr");
+  assert.equal(highlight.textContent, attack);
+  assert.equal(highlight.children.length, 0);
+  assert.equal(plain.className, "");
+  assert.equal(plain.textContent, attack);
   assert.equal(field(row, "airport-link").getAttribute("href"), `/ids/${encodeURIComponent(attack)}`);
   assert.equal(field(row, "conditions").textContent, "—");
   assert.equal(field(row, "dep_source").hidden, true);
@@ -488,6 +541,8 @@ test("network errors and malformed snapshots leave the last DOM and timestamp in
     detailSnapshot({ atis: [atis(), atis()] }),
     detailSnapshot({ arr_rows: [{ rwy: "35L", gates: "LANDR" }] }),
     detailSnapshot({ suggestion_differs: "yes" }),
+    detailSnapshot({ metar_parts: null }),
+    detailSnapshot({ metar_parts: [{ text: 5, conditions: null }] }),
   ]) {
     assert.throws(() => applySnapshot(fixture("airport"), bad), /Invalid IDS/);
   }

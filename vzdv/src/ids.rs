@@ -691,7 +691,7 @@ mod tests {
             (WeatherConditions::IFR, (350, 5, 15), "IMC 15 TAILWIND"),
             (WeatherConditions::IFR, (150, 5, 15), "IMC 33 TAILWIND"),
         ] {
-            let weather = weather("ASE", conditions.clone(), wind);
+            let weather = weather("ASE", conditions, wind);
             let flow = resolve(&config, "KASE", Some(&weather), &[]);
             assert_eq!(flow.dep_name(), Some(expected), "{conditions:?} {wind:?}");
         }
