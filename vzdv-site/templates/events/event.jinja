@@ -95,7 +95,7 @@
 {% endif %}
 
 <div class="row gy-4 pt-4">
-  {% for category in ['Enroute', 'TRACON', 'Local'] %}
+  {% for category in position_categories %}
     <div class="col-12 col-lg-4">
       <h4>{{ category }} Positions</h4>
       <ul class="list-group">
@@ -118,6 +118,23 @@
       </ul>
       {% if event_not_over and is_event_staff %}
         <button class="btn btn-outline-warning btn-sm w-100 mt-2 btn-position-add" category="{{ category }}" type="button">+ Add</button>
+      {% endif %}
+      {% if is_event_staff %}
+        <h6 class="pt-3">Any {{ category }}</h6>
+        <ul class="list-group">
+          {% for entry in any_pools[category] %}
+            <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
+              {% if entry.is_assigned %}
+                <span class="text-info"><i class="bi bi-check" title="Assigned to a position"></i> {{ entry.controller }}</span>
+              {% else %}
+                <span>{{ entry.controller }}</span>
+              {% endif %}
+              <span class="small text-body-secondary flex-shrink-0">Choice {{ entry.rank }}</span>
+            </li>
+          {% else %}
+            <li class="list-group-item text-body-secondary">No sign-ups</li>
+          {% endfor %}
+        </ul>
       {% endif %}
     </div>
   {% endfor %}
@@ -223,30 +240,23 @@
   <form action="/events/{{ event.id }}/register" method="POST">
     <div class="row">
       <div class="col">
-        <div class="mb-3">
-          <select class="form-select" name="choice_1">
-            <option value="0">~ Empty</option>
-            {% for position in positions_raw %}
-              <option value="{{ position.id }}" {% if self_register and self_register.choice_1 == position.id %}selected="selected"{% endif %}>{{ position.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="mb-3">
-          <select class="form-select" name="choice_2">
-            <option value="0">~ Empty</option>
-            {% for position in positions_raw %}
-              <option value="{{ position.id }}" {% if self_register and self_register.choice_2 == position.id %}selected="selected"{% endif %}>{{ position.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="mb-3">
-          <select class="form-select" name="choice_3">
-            <option value="0">~ Empty</option>
-            {% for position in positions_raw %}
-              <option value="{{ position.id }}" {% if self_register and self_register.choice_3 == position.id %}selected="selected"{% endif %}>{{ position.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
+        {% for n in [1, 2, 3] %}
+          {% set selected_position = self_register['choice_' ~ n] if self_register else none %}
+          {% set selected_any = self_register['choice_' ~ n ~ '_any'] if self_register else none %}
+          <div class="mb-3">
+            <select class="form-select" name="choice_{{ n }}">
+              <option value="0">~ Empty</option>
+              {% for category in position_categories %}
+                <optgroup label="{{ category }}">
+                  <option value="any:{{ category }}" {% if selected_any == category %}selected="selected"{% endif %}>Any {{ category }}</option>
+                  {% for position in positions_raw if position.category == category %}
+                    <option value="{{ position.id }}" {% if selected_position == position.id %}selected="selected"{% endif %}>{{ position.name }}</option>
+                  {% endfor %}
+                </optgroup>
+              {% endfor %}
+            </select>
+          </div>
+        {% endfor %}
         <div class="mb-3">
           <label for="notes" class="form-label">Notes</label>
           <textarea name="notes" class="form-control" maxlength="500">{{ self_register.notes }}</textarea>

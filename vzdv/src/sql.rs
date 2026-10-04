@@ -127,6 +127,10 @@ pub struct EventRegistration {
     pub choice_2: u32,
     pub choice_3: u32,
     pub notes: Option<String>,
+    /// Set to a position category when the matching choice is "Any <category>"
+    pub choice_1_any: Option<String>,
+    pub choice_2_any: Option<String>,
+    pub choice_3_any: Option<String>,
 }
 
 #[derive(Debug, FromRow, Serialize)]
@@ -355,6 +359,9 @@ CREATE TABLE event_registration (
     choice_2 INTEGER,
     choice_3 INTEGER,
     notes TEXT,
+    choice_1_any TEXT,
+    choice_2_any TEXT,
+    choice_3_any TEXT,
 
     UNIQUE(event_id, cid),
     FOREIGN KEY (event_id) REFERENCES event(id),
@@ -642,14 +649,17 @@ pub const DELETE_EVENT_REGISTRATION: &str = "DELETE FROM event_registration WHER
 pub const DELETE_EVENT_REGISTRATIONS_FOR: &str = "DELETE FROM event_registration WHERE event_id=$1";
 pub const UPSERT_EVENT_REGISTRATION: &str = "
 INSERT INTO event_registration
-    (event_id, cid, choice_1, choice_2, choice_3, notes)
+    (event_id, cid, choice_1, choice_2, choice_3, notes, choice_1_any, choice_2_any, choice_3_any)
 VALUES
-    ($1, $2, $3, $4, $5, $6)
+    ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT DO UPDATE SET
     choice_1=$3,
     choice_2=$4,
     choice_3=$5,
-    notes=$6";
+    notes=$6,
+    choice_1_any=$7,
+    choice_2_any=$8,
+    choice_3_any=$9";
 pub const CLEAR_REGISTRATIONS_FOR_POSITION_1: &str =
     "UPDATE event_registration SET choice_1=NULL WHERE choice_1=$1";
 pub const CLEAR_REGISTRATIONS_FOR_POSITION_2: &str =
