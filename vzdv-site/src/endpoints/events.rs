@@ -23,6 +23,8 @@ use log::debug;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
+use std::collections::HashMap;
+use std::fmt;
 use std::path::Path as FilePath;
 use std::sync::Arc;
 use tower_sessions::Session;
@@ -34,6 +36,63 @@ use vzdv::{
 
 /// Longest allowed name for a CIC position's category.
 const CIC_CATEGORY_MAX_LENGTH: usize = 32;
+
+/// Categories that event positions are grouped into.
+const POSITION_CATEGORIES: [&str; 3] = ["Enroute", "TRACON", "Local"];
+
+/// One of a controller's ranked choices when registering for an event.
+#[derive(Debug, PartialEq)]
+enum RegistrationChoice {
+    Empty,
+    /// A specific position, by ID
+    Position(u32),
+    /// Any position in the category
+    Any(&'static str),
+}
+
+impl RegistrationChoice {
+    /// Parse a value from the register form's dropdown.
+    ///
+    /// Positions that aren't part of the event and unknown categories are
+    /// treated as empty, as can happen if staff delete a position while
+    /// someone has the form open.
+    fn parse(value: &str, positions: &[EventPosition]) -> Self {
+        if let Some(category) = value.strip_prefix("any:") {
+            return match POSITION_CATEGORIES.iter().find(|&&c| c == category) {
+                Some(category) => Self::Any(category),
+                None => Self::Empty,
+            };
+        }
+        match value.parse() {
+            Ok(id) if positions.iter().any(|position| position.id == id) => Self::Position(id),
+            _ => Self::Empty,
+        }
+    }
+
+    fn position(&self) -> Option<u32> {
+        match self {
+            Self::Position(id) => Some(*id),
+            _ => None,
+        }
+    }
+
+    fn any_category(&self) -> Option<&'static str> {
+        match self {
+            Self::Any(category) => Some(category),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for RegistrationChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => write!(f, "0"),
+            Self::Position(id) => write!(f, "{id}"),
+            Self::Any(category) => write!(f, "any:{category}"),
+        }
+    }
+}
 
 /// Format a controller's name for display on the event page
 fn format_controller_name(controller: &Controller) -> String {
@@ -265,6 +324,7 @@ async fn page_event(
     let cic_positions = event_cic_positions_extra(event.id, &state.db).await?;
     let registrations =
         event_registrations_extra(event.id, &positions_raw, &cic_positions, &state.db).await?;
+    let any_pools = any_category_pools(&registrations);
     let registered_controllers = event_registered_controllers(event.id, &state.db).await?;
     let all_controllers: Vec<Controller> = sqlx::query_as(sql::GET_ALL_CONTROLLERS_ON_ROSTER)
         .fetch_all(&state.db)
@@ -302,7 +362,9 @@ async fn page_event(
         positions,
         cic_positions,
         positions_raw,
+        position_categories => POSITION_CATEGORIES,
         registrations,
+        any_pools,
         registered_controllers,
         all_controllers,
         enroute_splits,
@@ -432,8 +494,26 @@ struct EventRegistrationDisplay {
     choice_1: String,
     choice_2: String,
     choice_3: String,
+    /// Categories chosen as "Any <category>", by choice rank
+    any_choices: [Option<String>; 3],
     notes: String,
     is_assigned: bool,
+}
+
+/// Name of a registration choice, which is either a position or "Any <category>".
+fn registration_choice_name(
+    position_id: u32,
+    any_category: Option<&str>,
+    positions: &[EventPosition],
+) -> String {
+    match any_category {
+        Some(category) => format!("Any {category}"),
+        None => positions
+            .iter()
+            .find(|pos| pos.id == position_id)
+            .map(|pos| pos.name.clone())
+            .unwrap_or_default(),
+    }
 }
 
 /// Supply event registration data with controller and position names.
@@ -450,18 +530,21 @@ async fn event_registrations_extra(
     let mut ret = Vec::with_capacity(registrations.len());
 
     for registration in &registrations {
-        let c_1 = positions
-            .iter()
-            .find(|pos| pos.id == registration.choice_1)
-            .map(|pos| pos.name.clone());
-        let c_2 = positions
-            .iter()
-            .find(|pos| pos.id == registration.choice_2)
-            .map(|pos| pos.name.clone());
-        let c_3 = positions
-            .iter()
-            .find(|pos| pos.id == registration.choice_3)
-            .map(|pos| pos.name.clone());
+        let c_1 = registration_choice_name(
+            registration.choice_1,
+            registration.choice_1_any.as_deref(),
+            positions,
+        );
+        let c_2 = registration_choice_name(
+            registration.choice_2,
+            registration.choice_2_any.as_deref(),
+            positions,
+        );
+        let c_3 = registration_choice_name(
+            registration.choice_3,
+            registration.choice_3_any.as_deref(),
+            positions,
+        );
         let controller_db: Option<Controller> = sqlx::query_as(sql::GET_CONTROLLER_BY_CID)
             .bind(registration.cid)
             .fetch_optional(db)
@@ -488,9 +571,14 @@ async fn event_registrations_extra(
         ret.push(EventRegistrationDisplay {
             controller,
             cid: controller_db.as_ref().map(|c| c.cid).unwrap_or_default(),
-            choice_1: c_1.unwrap_or_default(),
-            choice_2: c_2.unwrap_or_default(),
-            choice_3: c_3.unwrap_or_default(),
+            choice_1: c_1,
+            choice_2: c_2,
+            choice_3: c_3,
+            any_choices: [
+                registration.choice_1_any.clone(),
+                registration.choice_2_any.clone(),
+                registration.choice_3_any.clone(),
+            ],
             notes,
             is_assigned: if let Some(record) = controller_db {
                 positions.iter().any(|p| p.cid == Some(record.cid))
@@ -502,6 +590,49 @@ async fn event_registrations_extra(
     }
 
     Ok(ret)
+}
+
+#[derive(Serialize)]
+struct AnyPoolEntry {
+    controller: String,
+    cid: u32,
+    /// Which of their choices this was
+    rank: usize,
+    is_assigned: bool,
+}
+
+/// Group the controllers who chose "Any <category>" by category,
+/// ordered by how highly they ranked it.
+fn any_category_pools(
+    registrations: &[EventRegistrationDisplay],
+) -> HashMap<&'static str, Vec<AnyPoolEntry>> {
+    POSITION_CATEGORIES
+        .iter()
+        .map(|&category| {
+            let entries = registrations
+                .iter()
+                .filter_map(|registration| {
+                    let rank = registration
+                        .any_choices
+                        .iter()
+                        .position(|choice| choice.as_deref() == Some(category))?
+                        + 1;
+                    Some(AnyPoolEntry {
+                        controller: registration.controller.clone(),
+                        cid: registration.cid,
+                        rank,
+                        is_assigned: registration.is_assigned,
+                    })
+                })
+                .sorted_by(|a, b| {
+                    a.rank
+                        .cmp(&b.rank)
+                        .then_with(|| a.controller.cmp(&b.controller))
+                })
+                .collect();
+            (category, entries)
+        })
+        .collect()
 }
 
 #[derive(Debug, Default)]
@@ -660,10 +791,34 @@ async fn api_delete_event(
 
 #[derive(Deserialize)]
 struct RegisterForm {
-    choice_1: u32,
-    choice_2: u32,
-    choice_3: u32,
+    choice_1: String,
+    choice_2: String,
+    choice_3: String,
     notes: String,
+}
+
+/// Create or update a controller's registration for an event.
+async fn upsert_registration(
+    db: &Pool<Sqlite>,
+    event_id: u32,
+    cid: u32,
+    choices: &[RegistrationChoice; 3],
+    notes: &str,
+) -> sqlx::Result<()> {
+    let [c_1, c_2, c_3] = choices;
+    sqlx::query(sql::UPSERT_EVENT_REGISTRATION)
+        .bind(event_id)
+        .bind(cid)
+        .bind(c_1.position())
+        .bind(c_2.position())
+        .bind(c_3.position())
+        .bind(notes)
+        .bind(c_1.any_category())
+        .bind(c_2.any_category())
+        .bind(c_3.any_category())
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 /// Submit a form to register for an event or update a registration.
@@ -687,21 +842,15 @@ async fn post_register_for_event(
         return Ok(Redirect::to(&format!("/events/{id}")));
     };
 
-    let c_1 = if register_data.choice_1 == 0u32 {
-        None
-    } else {
-        Some(register_data.choice_1)
-    };
-    let c_2 = if register_data.choice_2 == 0u32 {
-        None
-    } else {
-        Some(register_data.choice_2)
-    };
-    let c_3 = if register_data.choice_3 == 0u32 {
-        None
-    } else {
-        Some(register_data.choice_3)
-    };
+    let positions: Vec<EventPosition> = sqlx::query_as(sql::GET_EVENT_POSITIONS)
+        .bind(id)
+        .fetch_all(&state.db)
+        .await?;
+    let choices = [
+        RegistrationChoice::parse(&register_data.choice_1, &positions),
+        RegistrationChoice::parse(&register_data.choice_2, &positions),
+        RegistrationChoice::parse(&register_data.choice_3, &positions),
+    ];
 
     // upsert the registration
     let notes = if register_data.notes.len() > 500 {
@@ -709,22 +858,10 @@ async fn post_register_for_event(
     } else {
         &register_data.notes
     };
-    sqlx::query(sql::UPSERT_EVENT_REGISTRATION)
-        .bind(id)
-        .bind(cid)
-        .bind(c_1)
-        .bind(c_2)
-        .bind(c_3)
-        .bind(notes)
-        .execute(&state.db)
-        .await?;
+    upsert_registration(&state.db, id, cid, &choices, notes).await?;
+    let [c_1, c_2, c_3] = &choices;
     record_log(
-        format!(
-            "{cid} registered for event {id}: {} {} {}",
-            c_1.unwrap_or_default(),
-            c_2.unwrap_or_default(),
-            c_3.unwrap_or_default()
-        ),
+        format!("{cid} registered for event {id}: {c_1} {c_2} {c_3}"),
         &state.db,
         true,
     )
@@ -1335,7 +1472,7 @@ pub fn router() -> Router<Arc<AppState>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{RegistrationChoice::*, *};
     use sqlx::{Executor, sqlite::SqlitePoolOptions};
 
     async fn test_db() -> Pool<Sqlite> {
@@ -1381,16 +1518,37 @@ mod tests {
     }
 
     async fn register(db: &Pool<Sqlite>, event_id: u32, cid: u32) {
-        sqlx::query(sql::UPSERT_EVENT_REGISTRATION)
-            .bind(event_id)
-            .bind(cid)
-            .bind(None::<u32>)
-            .bind(None::<u32>)
-            .bind(None::<u32>)
-            .bind("")
-            .execute(db)
+        register_with(db, event_id, cid, [Empty, Empty, Empty]).await;
+    }
+
+    async fn register_with(
+        db: &Pool<Sqlite>,
+        event_id: u32,
+        cid: u32,
+        choices: [RegistrationChoice; 3],
+    ) {
+        upsert_registration(db, event_id, cid, &choices, "")
             .await
             .unwrap();
+    }
+
+    async fn add_position(db: &Pool<Sqlite>, event_id: u32, name: &str, category: &str) -> u32 {
+        sqlx::query(sql::INSERT_EVENT_POSITION)
+            .bind(event_id)
+            .bind(name)
+            .bind(category)
+            .execute(db)
+            .await
+            .unwrap()
+            .last_insert_rowid() as u32
+    }
+
+    async fn event_positions(db: &Pool<Sqlite>, event_id: u32) -> Vec<EventPosition> {
+        sqlx::query_as(sql::GET_EVENT_POSITIONS)
+            .bind(event_id)
+            .fetch_all(db)
+            .await
+            .unwrap()
     }
 
     async fn set_cic(db: &Pool<Sqlite>, event_id: u32, position_id: u32, cid: Option<u32>) {
@@ -1488,5 +1646,104 @@ mod tests {
             event_cic_positions_extra(event_2, &db).await.unwrap().len(),
             3
         );
+    }
+
+    #[tokio::test]
+    async fn test_registration_choice_parse() {
+        let db = test_db().await;
+        let event_1 = create_event(&db).await;
+        let event_2 = create_event(&db).await;
+        let position = add_position(&db, event_1, "DEN_APP", "TRACON").await;
+        let other_event_position = add_position(&db, event_2, "DEN_TWR", "Local").await;
+        let positions = event_positions(&db, event_1).await;
+
+        let parse = |value: &str| RegistrationChoice::parse(value, &positions);
+        assert_eq!(parse("0"), Empty);
+        assert_eq!(parse(""), Empty);
+        assert_eq!(parse("junk"), Empty);
+        assert_eq!(parse(&position.to_string()), Position(position));
+        assert_eq!(parse(&other_event_position.to_string()), Empty);
+        assert_eq!(parse("any:Enroute"), Any("Enroute"));
+        assert_eq!(parse("any:TRACON"), Any("TRACON"));
+        assert_eq!(parse("any:Local"), Any("Local"));
+        assert_eq!(parse("any:tracon"), Empty);
+        assert_eq!(parse("any:CAB"), Empty);
+    }
+
+    #[tokio::test]
+    async fn test_registration_choice_slot_holds_one_kind() {
+        let db = test_db().await;
+        let event_id = create_event(&db).await;
+        let position = add_position(&db, event_id, "DEN_APP", "TRACON").await;
+        let get = || async {
+            sqlx::query_as::<_, EventRegistration>(sql::GET_EVENT_REGISTRATION_FOR)
+                .bind(event_id)
+                .bind(1)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        };
+
+        register_with(&db, event_id, 1, [Any("TRACON"), Position(position), Empty]).await;
+        let registration = get().await;
+        assert_eq!(registration.choice_1, 0);
+        assert_eq!(registration.choice_1_any.as_deref(), Some("TRACON"));
+        assert_eq!(registration.choice_2, position);
+        assert_eq!(registration.choice_2_any, None);
+        assert_eq!(registration.choice_3_any, None);
+
+        // updating swaps the kinds without leaving the old value behind
+        register_with(&db, event_id, 1, [Position(position), Any("Local"), Empty]).await;
+        let registration = get().await;
+        assert_eq!(registration.choice_1, position);
+        assert_eq!(registration.choice_1_any, None);
+        assert_eq!(registration.choice_2, 0);
+        assert_eq!(registration.choice_2_any.as_deref(), Some("Local"));
+    }
+
+    #[tokio::test]
+    async fn test_any_category_pools() {
+        let db = test_db().await;
+        let event_id = create_event(&db).await;
+        let enroute = add_position(&db, event_id, "DEN_01_CTR", "Enroute").await;
+        register_with(&db, event_id, 1, [Position(enroute), Any("TRACON"), Empty]).await;
+        register_with(&db, event_id, 2, [Any("TRACON"), Empty, Any("Local")]).await;
+        sqlx::query(sql::UPDATE_EVENT_POSITION_CONTROLLER)
+            .bind(enroute)
+            .bind(1)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let positions = event_positions(&db, event_id).await;
+        let registrations = event_registrations_extra(event_id, &positions, &[], &db)
+            .await
+            .unwrap()
+            .into_iter()
+            .sorted_by_key(|r| r.cid)
+            .collect::<Vec<_>>();
+        let choices: Vec<_> = registrations
+            .iter()
+            .map(|r| [r.choice_1.as_str(), &r.choice_2, &r.choice_3])
+            .collect();
+        assert_eq!(
+            choices,
+            [
+                ["DEN_01_CTR", "Any TRACON", ""],
+                ["Any TRACON", "", "Any Local"]
+            ]
+        );
+
+        let pools = any_category_pools(&registrations);
+        let pool = |category| -> Vec<_> {
+            pools[category]
+                .iter()
+                .map(|e| (e.cid, e.rank, e.is_assigned))
+                .collect()
+        };
+        assert_eq!(pool("Enroute"), []);
+        // ordered by rank, and controllers already on a position are marked
+        assert_eq!(pool("TRACON"), [(2, 1, false), (1, 2, true)]);
+        assert_eq!(pool("Local"), [(2, 3, false)]);
     }
 }
