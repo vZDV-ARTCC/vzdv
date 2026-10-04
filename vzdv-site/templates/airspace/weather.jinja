@@ -38,9 +38,11 @@
         <td>
           <a href="https://metar-taf.com/{{ airport.name }}" target="_blank">{{ airport.name }}</a>
         </td>
-        <td>{{ airport.visibility }}</td>
+        <td>{% if airport.visibility is none %}<span class="text-muted">—</span>{% else %}{{ airport.visibility }}{% endif %}</td>
         <td>
-          {% if airport.ceiling == 3456 %}
+          {% if airport.ceiling is none %}
+            <span class="text-muted">Unknown</span>
+          {% elif airport.ceiling == 3456 %}
             Clear
           {% else %}
             {{ airport.ceiling|format_number }}
@@ -53,8 +55,10 @@
             <span class="badge rounded-pill text-bg-info">{{ airport.conditions }}</span>
           {% elif airport.conditions == 'IFR' %}
             <span class="badge rounded-pill text-bg-danger">{{ airport.conditions }}</span>
-          {% else %}
+          {% elif airport.conditions == 'LIFR' %}
             <span class="badge rounded-pill" style="background-color: purple;">{{ airport.conditions }}</span>
+          {% else %}
+            <span class="text-muted">Unknown</span>
           {% endif %}
         </td>
         <td>{{ airport.raw }}</td>

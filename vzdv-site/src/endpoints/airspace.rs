@@ -442,15 +442,16 @@ async fn page_denver_data(
     let metar = metar_resp.text().await?;
     let weather =
         parse_metar(&metar).map_err(|e| AppError::GenericFallback("parsing METAR for KDEN", e))?;
-    let runway_config = determine_runway_config(&weather);
+    // the runway config and components need the wind
+    let runway_config = weather.wind.map(determine_runway_config);
     let real_world = get_real_world_kden_atis().await?;
-    let wind_components = wind_components(&weather);
+    let wind_components = weather.wind.map(wind_components).unwrap_or_default();
     let runway_selection = fetch_runway_assignments()
         .await
         .map_err(|e| AppError::GenericFallback("determining recommended runways", e))?;
 
-    let wind = {
-        let dir = weather.wind.0 as i16 - 10;
+    let wind = weather.wind.map(|(dir, speed, gust)| {
+        let dir = dir as i16 - 10;
         let dir = if dir < 0 {
             360 + dir
         } else if dir > 360 {
@@ -461,23 +462,23 @@ async fn page_denver_data(
         format!(
             "{} at {}{}",
             dir,
-            weather.wind.1,
-            if weather.wind.2 > 0 {
-                format!(" gust {}", weather.wind.2)
+            speed,
+            if gust > 0 {
+                format!(" gust {}", gust)
             } else {
                 String::new()
             }
         )
-    };
+    });
 
     let template = state.templates.get_template("airspace/kden_data.jinja")?;
     let rendered = template.render(context! {
         user_info,
         weather,
         wind,
-        runway_config => runway_config.name(),
-        departing => runway_config.departing(),
-        landing => runway_config.landing(),
+        runway_config => runway_config.as_ref().map(|c| c.name()),
+        departing => runway_config.as_ref().map(|c| c.departing()),
+        landing => runway_config.as_ref().map(|c| c.landing()),
         wind_components,
         runway_selection,
         real_world,

@@ -24,23 +24,27 @@
               <span class="badge rounded-pill text-bg-info">{{ weather.conditions }}</span>
             {% elif weather.conditions == 'IFR' %}
               <span class="badge rounded-pill text-bg-danger">{{ weather.conditions }}</span>
-            {% else %}
+            {% elif weather.conditions == 'LIFR' %}
               <span class="badge rounded-pill" style="background-color: purple;">{{ weather.conditions }}</span>
+            {% else %}
+              <span class="text-muted">Unknown</span>
             {% endif %}
           </td>
         </tr>
         <tr>
           <th>Visibility</th>
-          <td>{{ weather.visibility }} SM</td>
+          <td>{% if weather.visibility is none %}Not reported{% else %}{{ weather.visibility }} SM{% endif %}</td>
         </td>
         <tr>
           <th>Wind</th>
-          <td>{{ wind }}</td>
+          <td>{{ wind or "Not reported" }}</td>
         </td>
         <tr>
           <th>Ceiling</th>
           <td>
-            {% if weather.ceiling == 3456 %}
+            {% if weather.ceiling is none %}
+              Unknown
+            {% elif weather.ceiling == 3456 %}
               Clear
             {% else %}
               {{ weather.ceiling|format_number }} ft
@@ -68,15 +72,15 @@
       <tbody>
         <tr>
           <th>Name</th>
-          <td>{{ runway_config }}</td>
+          <td>{{ runway_config or "Unknown: the METAR has no wind" }}</td>
         </tr>
         <tr>
           <th>Departing</th>
-          <td>{{ departing }}</td>
+          <td>{{ departing or "—" }}</td>
         </tr>
         <tr>
           <th>Landing</th>
-          <td>{{ landing }}</td>
+          <td>{{ landing or "—" }}</td>
         </tr>
       </tbody>
     </table>

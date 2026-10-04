@@ -126,7 +126,7 @@ async fn fetch_metar(ident: &str) -> anyhow::Result<Option<String>> {
         .map(|line| line.split_whitespace().join(" ")))
 }
 
-/// Summarize a METAR, leaving out what can't be read from non-US formats.
+/// Summarize a METAR, with the QNH as the altimeter for non-US formats.
 fn summarize_metar(metar: &str) -> WeatherSummary {
     let Ok(weather) = parse_metar(metar) else {
         return WeatherSummary {
@@ -136,13 +136,9 @@ fn summarize_metar(metar: &str) -> WeatherSummary {
         };
     };
     let mut summary = WeatherSummary::new(Some(&weather));
-    let mut groups = metar.split_whitespace();
-    // flight rules need the visibility in statute miles
-    if !groups.clone().any(|group| group.ends_with("SM")) {
-        summary.conditions = None;
-    }
     if summary.altimeter.is_none() {
-        summary.altimeter = groups
+        summary.altimeter = metar
+            .split_whitespace()
             .find(|group| {
                 group.len() == 5
                     && group.starts_with('Q')
@@ -346,10 +342,18 @@ mod tests {
         assert_eq!(split.wind.as_deref(), Some("350@5"));
         assert_eq!(split.altimeter.as_deref(), Some("30.32"));
 
-        // a missing wind doesn't stop the rest from being read
-        let no_wind = summarize_metar("KXYZ 041850Z AUTO /////KT 10SM CLR 15/05 A3001");
+        // missing values are left out, not assumed
+        let no_wind = summarize_metar("K5SM 042211Z AUTO 10SM CLR 15/M04 A3070 RMK AO2");
+        assert_eq!(no_wind.wind, None);
         assert_eq!(no_wind.conditions.as_deref(), Some("VFR"));
-        assert_eq!(no_wind.altimeter.as_deref(), Some("30.01"));
+        assert_eq!(no_wind.altimeter.as_deref(), Some("30.70"));
+        let no_visibility =
+            summarize_metar("KAJZ 042215Z AUTO 27009KT CLR 29/03 A3028 RMK AO2 T02940034 PWINO");
+        assert_eq!(no_visibility.wind.as_deref(), Some("270@9"));
+        assert_eq!(no_visibility.conditions, None);
+        // a LIFR ceiling settles the flight rules without the visibility
+        let lifr = summarize_metar("EGLL 041850Z AUTO 29005KT 9999 BKN002 19/09 Q1027");
+        assert_eq!(lifr.conditions.as_deref(), Some("LIFR"));
 
         let blank = summarize_metar("");
         assert_eq!(blank.wind, None);

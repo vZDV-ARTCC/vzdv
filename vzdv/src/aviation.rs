@@ -1,6 +1,8 @@
 use anyhow::{Result, anyhow};
-use log::warn;
 use serde::{Deserialize, Serialize};
+
+/// The `ceiling` when no layer is broken or overcast.
+pub const NO_CEILING: u16 = 3_456;
 
 /// Derived weather conditions, from best to worst.
 #[allow(clippy::upper_case_acronyms)]
@@ -41,14 +43,20 @@ pub struct MetarPart {
     pub conditions: Option<WeatherConditions>,
 }
 
-/// Parsed weather information for an airport.
+/// Parsed weather information for an airport. Anything the METAR doesn't
+/// report is `None`, not assumed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirportWeather {
     pub name: String,
-    pub conditions: WeatherConditions,
-    pub visibility: u16,
-    pub ceiling: u16,
-    pub wind: (u16, u8, u8),
+    /// `None` unless it can be determined from what was reported.
+    pub conditions: Option<WeatherConditions>,
+    /// Whole statute miles.
+    pub visibility: Option<u16>,
+    /// Feet, or [`NO_CEILING`]. `None` if the sky condition is missing or the
+    /// lowest broken or overcast layer has no height.
+    pub ceiling: Option<u16>,
+    /// Direction (0 if variable), speed and gust (0 if none).
+    pub wind: Option<(u16, u8, u8)>,
     pub altimeter: Option<f32>,
     pub raw: String,
 }
@@ -91,8 +99,6 @@ fn remarks_start(groups: &[Group]) -> usize {
 }
 
 /// Parse a METAR into a struct of data.
-///
-/// Missing wind reads as calm, and missing visibility as 0 (LIFR).
 pub fn parse_metar(line: &str) -> Result<AirportWeather> {
     let groups = metar_groups(line);
     let station = groups.first().ok_or_else(|| anyhow!("Blank METAR"))?;
@@ -106,27 +112,28 @@ pub fn parse_metar(line: &str) -> Result<AirportWeather> {
         .map(|group| group.value.as_str())
         .collect();
 
-    let ceiling = body
-        .iter()
-        .find_map(|group| ceiling_layer(group))
-        .unwrap_or(3_456);
+    let ceiling = match body.iter().find_map(|group| ceiling_layer(group)) {
+        // `None` for a layer without a height, like "BKN///"
+        Some(height) => height,
+        None if body.iter().any(|group| is_sky_condition(group)) => Some(NO_CEILING),
+        None => None,
+    };
     let visibility = body
         .iter()
         .enumerate()
-        .find_map(|(i, group)| visibility_miles(group, i.checked_sub(1).map(|prev| body[prev])))
-        .unwrap_or_else(|| {
-            warn!("Could not determine visibility for {airport}");
-            0
-        });
-    let wind = body
-        .iter()
-        .find_map(|group| parse_wind(group))
-        .unwrap_or_else(|| {
-            warn!("Could not determine wind for {airport}");
-            (0, 0, 0)
-        });
-    let conditions =
-        WeatherConditions::for_ceiling(ceiling).max(WeatherConditions::for_visibility(visibility));
+        .find_map(|(i, group)| visibility_miles(group, i.checked_sub(1).map(|prev| body[prev])));
+    let wind = body.iter().find_map(|group| parse_wind(group));
+    let conditions = match (
+        ceiling.map(WeatherConditions::for_ceiling),
+        visibility.map(WeatherConditions::for_visibility),
+    ) {
+        (Some(ceiling), Some(visibility)) => Some(ceiling.max(visibility)),
+        // nothing is worse than LIFR, so the other half doesn't matter
+        (Some(WeatherConditions::LIFR), None) | (None, Some(WeatherConditions::LIFR)) => {
+            Some(WeatherConditions::LIFR)
+        }
+        _ => None,
+    };
     let altimeter = body.iter().find_map(|group| {
         let hundredths = group.strip_prefix('A')?;
         if hundredths.len() != 4 || !hundredths.bytes().all(|b| b.is_ascii_digit()) {
@@ -175,16 +182,31 @@ fn parse_wind(group: &str) -> Option<(u16, u8, u8)> {
     Some((direction, speed, gust))
 }
 
-/// Height in feet of a broken, overcast or vertical visibility layer, e.g. "OVC008" or "VV002".
-fn ceiling_layer(group: &str) -> Option<u16> {
-    let height = ["BKN", "OVC", "VV"]
+/// The 3-character height of a cloud layer like "FEW085", "OVC008CB" or "VV002".
+fn layer_height<'a>(group: &'a str, prefixes: &[&str]) -> Option<&'a str> {
+    let height = prefixes
         .iter()
-        .find_map(|prefix| group.strip_prefix(prefix))?;
-    let hundreds = height.get(..3)?;
-    if !hundreds.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    Some(hundreds.parse::<u16>().ok()?.saturating_mul(100))
+        .find_map(|prefix| group.strip_prefix(prefix))?
+        .get(..3)?;
+    (height == "///" || height.bytes().all(|b| b.is_ascii_digit())).then_some(height)
+}
+
+/// Whether a group reports the sky condition: clear skies or a cloud layer.
+fn is_sky_condition(group: &str) -> bool {
+    matches!(group, "CLR" | "SKC" | "NSC" | "NCD" | "CAVOK")
+        || layer_height(group, &["FEW", "SCT", "BKN", "OVC", "VV"]).is_some()
+}
+
+/// For a broken, overcast or vertical visibility layer, its height in feet,
+/// which is `None` when not reported ("BKN///"). `None` for other groups.
+fn ceiling_layer(group: &str) -> Option<Option<u16>> {
+    let height = layer_height(group, &["BKN", "OVC", "VV"])?;
+    Some(
+        height
+            .parse::<u16>()
+            .ok()
+            .map(|hundreds| hundreds.saturating_mul(100)),
+    )
 }
 
 /// Whole statute miles from a visibility group like "10SM", "1/2SM", "M1/4SM" or "P6SM".
@@ -253,7 +275,12 @@ pub fn highlight_metar(metar: &str) -> Vec<MetarPart> {
         } else if let Some(miles) = visibility_miles(group, None) {
             (1, Some(WeatherConditions::for_visibility(miles)))
         } else {
-            (1, ceiling_layer(group).map(WeatherConditions::for_ceiling))
+            (
+                1,
+                ceiling_layer(group)
+                    .flatten()
+                    .map(WeatherConditions::for_ceiling),
+            )
         };
         let text = groups[i..i + len]
             .iter()
@@ -281,19 +308,21 @@ pub fn wind_between(val: u16, min: u16, max: u16) -> bool {
 
 #[cfg(test)]
 pub mod tests {
-    use super::{MetarPart, WeatherConditions, highlight_metar, parse_metar, wind_between};
+    use super::{
+        MetarPart, NO_CEILING, WeatherConditions, highlight_metar, parse_metar, wind_between,
+    };
     use WeatherConditions::{IFR, LIFR, MVFR, VFR};
 
-    /// What `parse_metar` should read from a METAR.
+    /// What `parse_metar` should read from a METAR; `None` when it's not reported.
     struct Expected {
-        visibility: u16,
-        /// 3,456 when there's no ceiling
-        ceiling: u16,
-        wind: (u16, u8, u8),
+        visibility: Option<u16>,
+        ceiling: Option<u16>,
+        wind: Option<(u16, u8, u8)>,
         altimeter: Option<f32>,
-        conditions: WeatherConditions,
+        conditions: Option<WeatherConditions>,
     }
 
+    /// A METAR that reports visibility, sky condition and wind.
     const fn expect(
         visibility: u16,
         ceiling: u16,
@@ -302,20 +331,23 @@ pub mod tests {
         conditions: WeatherConditions,
     ) -> Expected {
         Expected {
-            visibility,
-            ceiling,
-            wind,
+            visibility: Some(visibility),
+            ceiling: Some(ceiling),
+            wind: Some(wind),
             altimeter,
-            conditions,
+            conditions: Some(conditions),
         }
     }
+
+    /// No ceiling layer.
+    const CLEAR: u16 = NO_CEILING;
 
     /// Real METARs unless noted, with what they should parse to.
     const METARS: &[(&str, Expected)] = &[
         // regular reports
         (
             "KDEN 042053Z 01007KT 10SM FEW090 FEW140 27/04 A3029 RMK AO2 SLP195 T02670039 56021",
-            expect(10, 3_456, (10, 7, 0), Some(30.29), VFR),
+            expect(10, CLEAR, (10, 7, 0), Some(30.29), VFR),
         ),
         (
             "KTPA 042153Z VRB05KT 10SM FEW039 SCT050 BKN150 BKN300 29/23 A2998 RMK AO2 SLP153 FRQ LTGICCG DSNT N AND SE CB DSNT N AND SE AND NW T02940233 $",
@@ -331,16 +363,16 @@ pub mod tests {
         ),
         (
             "KCOS 042154Z 16014G26KT 10SM FEW120 FEW200 22/08 A3039 RMK AO2 PK WND 15026/2150 SLP227 T02220078",
-            expect(10, 3_456, (160, 14, 26), Some(30.39), VFR),
+            expect(10, CLEAR, (160, 14, 26), Some(30.39), VFR),
         ),
         // corrected and automated reports
         (
             "KPTK 042153Z COR 28011KT 10SM FEW055 21/10 A3005 RMK AO2 SLP174 T02060100",
-            expect(10, 3_456, (280, 11, 0), Some(30.05), VFR),
+            expect(10, CLEAR, (280, 11, 0), Some(30.05), VFR),
         ),
         (
             "KFLP 042156Z AUTO 00000KT 10SM CLR 27/09 A3015 RMK AO2 SLP204 T02720089",
-            expect(10, 3_456, (0, 0, 0), Some(30.15), VFR),
+            expect(10, CLEAR, (0, 0, 0), Some(30.15), VFR),
         ),
         (
             "KIXA 042135Z AUTO 35005KT 3SM -DZ BKN005 OVC011 18/18 A3005 RMK AO2",
@@ -381,7 +413,14 @@ pub mod tests {
         ),
         (
             "KHSP 042155Z AUTO 27010KT M1/4SM FG 14/14 A3017 RMK AO2 T01420140",
-            expect(0, 3_456, (270, 10, 0), Some(30.17), LIFR),
+            // no sky condition, but the visibility alone makes it LIFR
+            Expected {
+                visibility: Some(0),
+                ceiling: None,
+                wind: Some((270, 10, 0)),
+                altimeter: Some(30.17),
+                conditions: Some(LIFR),
+            },
         ),
         (
             "KOTM 131356Z AUTO 33029G39KT 3/4SM +TSRA BR BKN003 OVC008 21/21 A2992 RMK AO2 PK WND 31039/1354 LTG DSNT ALQDS PRESRR P0019 T02110211",
@@ -393,24 +432,85 @@ pub mod tests {
             "KDEN 151453Z 35005 KT 10SM BKN037 BKN080 14/01 A3032 RMK AO2 SLP203 T01390006 51020",
             expect(10, 3_700, (350, 5, 0), Some(30.32), VFR),
         ),
-        // missing groups
+        // missing groups make whatever depends on them unknown
+        (
+            "K5SM 042211Z AUTO 10SM CLR 15/M04 A3070 RMK AO2",
+            Expected {
+                visibility: Some(10),
+                ceiling: Some(CLEAR),
+                wind: None,
+                altimeter: Some(30.70),
+                conditions: Some(VFR),
+            },
+        ),
+        (
+            // clear skies say nothing about the visibility
+            "KAJZ 042215Z AUTO 27009KT CLR 29/03 A3028 RMK AO2 T02940034 PWINO",
+            Expected {
+                visibility: None,
+                ceiling: Some(CLEAR),
+                wind: Some((270, 9, 0)),
+                altimeter: Some(30.28),
+                conditions: None,
+            },
+        ),
+        (
+            "KCPW 070435Z AUTO 03007KT OVC003 M13/M15 A3013 RMK AO2 PWINO",
+            // nothing is worse than LIFR, so the missing visibility doesn't matter
+            Expected {
+                visibility: None,
+                ceiling: Some(300),
+                wind: Some((30, 7, 0)),
+                altimeter: Some(30.13),
+                conditions: Some(LIFR),
+            },
+        ),
+        (
+            "K4BM 070435Z AUTO 36006KT BKN009 OVC014 A3021 RMK AO2 PWINO",
+            // at least IFR, but it could be LIFR
+            Expected {
+                visibility: None,
+                ceiling: Some(900),
+                wind: Some((360, 6, 0)),
+                altimeter: Some(30.21),
+                conditions: None,
+            },
+        ),
         (
             "K40B 042120Z AUTO 16007G16KT 090V190 13/02 RMK AO1 SLPNO T01350025",
-            expect(0, 3_456, (160, 7, 16), None, LIFR),
+            Expected {
+                visibility: None,
+                ceiling: None,
+                wind: Some((160, 7, 16)),
+                altimeter: None,
+                conditions: None,
+            },
         ),
         (
             "KAEJ 242115Z AUTO 18/M10 A3011 RMK AO2 T01801100 PWINO",
-            expect(0, 3_456, (0, 0, 0), Some(30.11), LIFR),
+            Expected {
+                visibility: None,
+                ceiling: None,
+                wind: None,
+                altimeter: Some(30.11),
+                conditions: None,
+            },
         ),
         // synthetic: the same stray space before the visibility's units
         (
             "KXYZ 041856Z 18010KT 2 SM BR OVC006 15/14 A3001",
             expect(2, 600, (180, 10, 0), Some(30.01), IFR),
         ),
-        // synthetic: missing wind and cloud heights from an automated station
+        // synthetic: an automated station's missing wind and lowest cloud height
         (
             "KXYZ 041856Z AUTO /////KT 10SM BKN/// OVC045 15/05 A3001 RMK AO2 PWINO",
-            expect(10, 4_500, (0, 0, 0), Some(30.01), VFR),
+            Expected {
+                visibility: Some(10),
+                ceiling: None,
+                wind: None,
+                altimeter: Some(30.01),
+                conditions: None,
+            },
         ),
         // synthetic: 3-digit winds, ICAO's "P99" for gusts over 99 kt, and a CB layer
         (
@@ -426,10 +526,16 @@ pub mod tests {
             "KXYZ 041856Z 22013KT 10SM BKN045 24/07 A3034 RMK CIG 005V010 VIS 1/2SM BKN002",
             expect(10, 4_500, (220, 13, 0), Some(30.34), VFR),
         ),
-        // international formats have no statute-mile visibility
+        // international formats have no statute-mile visibility or inHg altimeter
         (
             "EGLL 041850Z AUTO 29005KT 9999 NCD 19/09 Q1027",
-            expect(0, 3_456, (290, 5, 0), None, LIFR),
+            Expected {
+                visibility: None,
+                ceiling: Some(CLEAR),
+                wind: Some((290, 5, 0)),
+                altimeter: None,
+                conditions: None,
+            },
         ),
     ];
 
@@ -461,11 +567,11 @@ pub mod tests {
                 "{metar}"
             );
             assert!(parts.iter().all(|part| part.conditions != Some(VFR)));
-            // the worst highlight matches the conditions, unless visibility is missing
+            // with both halves reported, the worst highlight matches the conditions
             let worst = parts.iter().filter_map(|part| part.conditions).max();
-            if expected.visibility > 0 || metar.contains("SM ") {
+            if expected.visibility.is_some() && expected.ceiling.is_some() {
                 assert_eq!(
-                    worst.unwrap_or(VFR),
+                    Some(worst.unwrap_or(VFR)),
                     expected.conditions,
                     "conditions: {metar}"
                 );
@@ -535,8 +641,8 @@ pub mod tests {
         assert!(parse_metar("   ").is_err());
         let ret = parse_metar("KDEN  041853Z  22013KT   10SM CLR 24/07 A3034").unwrap();
         assert_eq!(ret.name, "DEN");
-        assert_eq!(ret.wind, (220, 13, 0));
-        assert_eq!(ret.visibility, 10);
+        assert_eq!(ret.wind, Some((220, 13, 0)));
+        assert_eq!(ret.visibility, Some(10));
         // non-ASCII doesn't panic
         assert!(parse_metar("ÉDEN 041853Z 22013KT 10SM").is_ok());
     }
@@ -545,31 +651,39 @@ pub mod tests {
     fn test_parse_metar_standard() {
         let ret = parse_metar("KDEN 030253Z 22013KT 10SM SCT100 BKN160 13/M12 A2943 RMK AO2 PK WND 21036/0211 SLP924 T01331117 58005").unwrap();
         assert_eq!(ret.name, "DEN");
-        assert_eq!(ret.conditions, WeatherConditions::VFR);
+        assert_eq!(ret.conditions, Some(VFR));
 
-        let ret = parse_metar("KDEN 2SM BNK005").unwrap();
-        assert_eq!(ret.conditions, WeatherConditions::IFR);
+        let ret = parse_metar("KDEN 2SM BKN005").unwrap();
+        assert_eq!(ret.conditions, Some(IFR));
 
         let ret = parse_metar("KDEN 4SM OVC020").unwrap();
-        assert_eq!(ret.conditions, WeatherConditions::MVFR);
+        assert_eq!(ret.conditions, Some(MVFR));
 
         let ret = parse_metar("KDEN 1/2SM OVC001").unwrap();
-        assert_eq!(ret.conditions, WeatherConditions::LIFR);
+        assert_eq!(ret.conditions, Some(LIFR));
+
+        // a misspelled layer isn't a sky condition, so an IFR visibility can't settle it
+        let ret = parse_metar("KDEN 2SM BNK005").unwrap();
+        assert_eq!(ret.ceiling, None);
+        assert_eq!(ret.conditions, None);
     }
 
     #[test]
     fn test_parse_metar_wind() {
+        // missing isn't calm
         let missing = "K5SM 070435Z AUTO 10SM CLR M12/M13 A3015 RMK AO2";
         let ret = parse_metar(missing).unwrap();
-        assert_eq!(ret.wind, (0, 0, 0));
+        assert_eq!(ret.wind, None);
+        let calm = "KFLP 042156Z AUTO 00000KT 10SM CLR 27/09 A3015 RMK AO2 SLP204 T02720089";
+        assert_eq!(parse_metar(calm).unwrap().wind, Some((0, 0, 0)));
 
         let standard = "KCPW 070435Z AUTO 03007KT OVC003 M13/M15 A3013 RMK AO2 PWINO";
         let ret = parse_metar(standard).unwrap();
-        assert_eq!(ret.wind, (30, 7, 0));
+        assert_eq!(ret.wind, Some((30, 7, 0)));
 
         let gust = "KFLY 070435Z AUTO 36014G21KT OVC036 M05/M07 A3028 RMK AO2 T10531075 PWINO";
         let ret = parse_metar(gust).unwrap();
-        assert_eq!(ret.wind, (360, 14, 21));
+        assert_eq!(ret.wind, Some((360, 14, 21)));
     }
 
     #[test]
@@ -596,31 +710,39 @@ pub mod tests {
     fn test_parse_metar_ceilings_and_visibilities() {
         let conditions = |metar: &str| parse_metar(metar).unwrap().conditions;
         // category boundaries: a 1,000 ft ceiling is MVFR and 500 ft is IFR
-        assert_eq!(conditions("KDEN 10SM OVC010"), WeatherConditions::MVFR);
-        assert_eq!(conditions("KDEN 10SM OVC009"), WeatherConditions::IFR);
-        assert_eq!(conditions("KDEN 10SM BKN005"), WeatherConditions::IFR);
-        assert_eq!(conditions("KDEN 10SM BKN004"), WeatherConditions::LIFR);
-        assert_eq!(conditions("KDEN 10SM OVC030"), WeatherConditions::MVFR);
-        assert_eq!(conditions("KDEN 10SM OVC031"), WeatherConditions::VFR);
-        assert_eq!(conditions("KDEN 5SM CLR"), WeatherConditions::MVFR);
-        assert_eq!(conditions("KDEN 3SM CLR"), WeatherConditions::MVFR);
+        assert_eq!(conditions("KDEN 10SM OVC010"), Some(MVFR));
+        assert_eq!(conditions("KDEN 10SM OVC009"), Some(IFR));
+        assert_eq!(conditions("KDEN 10SM BKN005"), Some(IFR));
+        assert_eq!(conditions("KDEN 10SM BKN004"), Some(LIFR));
+        assert_eq!(conditions("KDEN 10SM OVC030"), Some(MVFR));
+        assert_eq!(conditions("KDEN 10SM OVC031"), Some(VFR));
+        assert_eq!(conditions("KDEN 5SM CLR"), Some(MVFR));
+        assert_eq!(conditions("KDEN 3SM CLR"), Some(MVFR));
+        // FEW and SCT layers report the sky but aren't ceilings
+        assert_eq!(conditions("KDEN 10SM FEW005 SCT008"), Some(VFR));
         // the worse of the two wins
-        assert_eq!(conditions("KDEN 2SM OVC050"), WeatherConditions::IFR);
-        assert_eq!(conditions("KDEN 10SM VV002"), WeatherConditions::LIFR);
+        assert_eq!(conditions("KDEN 2SM OVC050"), Some(IFR));
+        assert_eq!(conditions("KDEN 10SM VV002"), Some(LIFR));
 
         let ret = parse_metar("KDEN 041853Z 1 1/2SM BR OVC008CB 24/07 A3034").unwrap();
-        assert_eq!(ret.visibility, 1);
-        assert_eq!(ret.ceiling, 800);
-        assert_eq!(ret.conditions, WeatherConditions::IFR);
-        assert_eq!(parse_metar("KDEN M1/4SM FG").unwrap().visibility, 0);
-        assert_eq!(parse_metar("KDEN P6SM SKC").unwrap().visibility, 6);
+        assert_eq!(ret.visibility, Some(1));
+        assert_eq!(ret.ceiling, Some(800));
+        assert_eq!(ret.conditions, Some(IFR));
+        assert_eq!(parse_metar("KDEN M1/4SM FG").unwrap().visibility, Some(0));
+        assert_eq!(parse_metar("KDEN P6SM SKC").unwrap().visibility, Some(6));
 
-        // layers without heights are skipped, and remarks are ignored
-        let ret =
-            parse_metar("KDEN 041853Z AUTO 10SM BKN/// OVC045 A3034 RMK CIG 005V010 VIS 1/2SM")
-                .unwrap();
-        assert_eq!(ret.ceiling, 4_500);
-        assert_eq!(ret.conditions, WeatherConditions::VFR);
+        // the lowest layer's height is missing, so the ceiling is unknown
+        let ret = parse_metar("KDEN 041853Z AUTO 10SM BKN/// OVC045 A3034").unwrap();
+        assert_eq!(ret.ceiling, None);
+        assert_eq!(ret.conditions, None);
+        // a missing height above a known ceiling doesn't matter
+        let ret = parse_metar("KDEN 041853Z AUTO 10SM OVC045 OVC/// A3034").unwrap();
+        assert_eq!(ret.ceiling, Some(4_500));
+        assert_eq!(ret.conditions, Some(VFR));
+        // remarks are ignored
+        let ret = parse_metar("KDEN 041853Z 10SM OVC045 A3034 RMK CIG 005V010 VIS 1/2SM").unwrap();
+        assert_eq!(ret.ceiling, Some(4_500));
+        assert_eq!(ret.visibility, Some(10));
         assert!(parse_metar("KDEN 041853Z  10SM  CLR").is_ok());
     }
 

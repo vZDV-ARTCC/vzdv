@@ -1,9 +1,6 @@
 //! Data about KDEN.
 
-use crate::{
-    GENERAL_HTTP_CLIENT,
-    aviation::{AirportWeather, wind_between},
-};
+use crate::{GENERAL_HTTP_CLIENT, aviation::wind_between};
 use anyhow::{Result, bail};
 use scraper::{Html, Selector};
 use serde::Serialize;
@@ -70,10 +67,11 @@ impl DenverConfig {
     }
 }
 
-/// Determine the likiest KDEN runway configuration based on the weather.
-pub fn determine_runway_config(weather: &AirportWeather) -> DenverConfig {
-    let dir = weather.wind.0;
-    let mag = std::cmp::max(weather.wind.1, weather.wind.2); // use gust if present
+/// Determine the likiest KDEN runway configuration from the METAR's wind
+/// (direction, speed, gust).
+pub fn determine_runway_config(wind: (u16, u8, u8)) -> DenverConfig {
+    let dir = wind.0;
+    let mag = std::cmp::max(wind.1, wind.2); // use gust if present
 
     if wind_between(dir, 260, 79) && mag <= 10 {
         DenverConfig::NorthCalm
@@ -134,10 +132,11 @@ static RUNWAYS: [(&str, f32); 12] = [
     ("17L", 173.0),
 ];
 
-/// Determine the wind components for all the runways.
-pub fn wind_components(weather: &AirportWeather) -> Vec<WindComponent> {
-    let dir = weather.wind.0 as f32;
-    let mag = std::cmp::max(weather.wind.1, weather.wind.2) as f32; // use gust if present
+/// Determine the wind components for all the runways from the METAR's wind
+/// (direction, speed, gust).
+pub fn wind_components(wind: (u16, u8, u8)) -> Vec<WindComponent> {
+    let dir = wind.0 as f32;
+    let mag = std::cmp::max(wind.1, wind.2) as f32; // use gust if present
 
     RUNWAYS
         .iter()
@@ -188,16 +187,22 @@ mod tests {
 
     #[test]
     fn test_determine_runway_config() {
-        let mut weather = parse_metar("KDEN 030253Z 00000KT 10SM SCT100 BKN160 13/M12 A2943 RMK AO2 PK WND 21036/0211 SLP924 T01331117 58005").unwrap();
-        assert_eq!(determine_runway_config(&weather), DenverConfig::NorthCalm);
-
-        weather.wind = (250, 10, 0);
-        assert_eq!(determine_runway_config(&weather), DenverConfig::SouthCalm);
-
-        weather.wind = (189, 11, 22);
-        assert_eq!(determine_runway_config(&weather), DenverConfig::SouthWest);
-
-        weather.wind = (210, 20, 35);
-        assert_eq!(determine_runway_config(&weather), DenverConfig::SouthAll);
+        let weather = parse_metar("KDEN 030253Z 00000KT 10SM SCT100 BKN160 13/M12 A2943 RMK AO2 PK WND 21036/0211 SLP924 T01331117 58005").unwrap();
+        assert_eq!(
+            determine_runway_config(weather.wind.unwrap()),
+            DenverConfig::NorthCalm
+        );
+        assert_eq!(
+            determine_runway_config((250, 10, 0)),
+            DenverConfig::SouthCalm
+        );
+        assert_eq!(
+            determine_runway_config((189, 11, 22)),
+            DenverConfig::SouthWest
+        );
+        assert_eq!(
+            determine_runway_config((210, 20, 35)),
+            DenverConfig::SouthAll
+        );
     }
 }

@@ -259,13 +259,14 @@ impl WeatherSummary {
         let Some(weather) = weather else {
             return Self::default();
         };
-        let (dir, mag, gust) = weather.wind;
         Self {
-            conditions: Some(format!("{:?}", weather.conditions)),
-            wind: Some(if gust > 0 {
-                format!("{dir:03}@{mag}G{gust}")
-            } else {
-                format!("{dir:03}@{mag}")
+            conditions: weather.conditions.map(|c| format!("{c:?}")),
+            wind: weather.wind.map(|(dir, mag, gust)| {
+                if gust > 0 {
+                    format!("{dir:03}@{mag}G{gust}")
+                } else {
+                    format!("{dir:03}@{mag}")
+                }
             }),
             altimeter: weather.altimeter.map(|a| format!("{a:.2}")),
             raw_metar: Some(weather.raw.clone()),
@@ -1196,6 +1197,38 @@ pub(crate) mod tests {
         assert!(row.atis_info.starts_with("ATIS B "));
         assert!(second.updated_at >= first.updated_at);
         assert!(Arc::ptr_eq(&second, &get_snapshot(&state).await.unwrap()));
+    }
+
+    /// Incomplete METARs show what's known and say why there's no flow.
+    #[tokio::test]
+    async fn incomplete_metars_leave_the_flow_undetermined() {
+        let state = state().await;
+        let weather = [
+            // no wind
+            vzdv::aviation::parse_metar("KAPA 042211Z AUTO 10SM CLR 15/M04 A3070 RMK AO2").unwrap(),
+            // no visibility
+            vzdv::aviation::parse_metar(
+                "KDEN 042215Z AUTO 27009KT CLR 29/03 A3028 RMK AO2 T02940034 PWINO",
+            )
+            .unwrap(),
+        ];
+        let snapshot = build_snapshot(&state.ids_config, &weather, &[], None, Utc::now());
+
+        let apa = row(&snapshot, "KAPA");
+        assert_eq!(apa.weather.wind, None);
+        assert_eq!(apa.weather.conditions.as_deref(), Some("VFR"));
+        assert_eq!(apa.weather.altimeter.as_deref(), Some("30.70"));
+        assert_eq!(apa.flow.dep_rwys, "");
+        assert_eq!(apa.flow.dep_source, None);
+        assert_eq!(apa.issue.as_deref(), Some("METAR has no wind"));
+
+        let den = row(&snapshot, "KDEN");
+        assert_eq!(den.weather.wind.as_deref(), Some("270@9"));
+        assert_eq!(den.weather.conditions, None);
+        assert_eq!(den.flow.dep_rwys, "");
+        assert_eq!(den.flow.arr_rwys, "");
+        assert_eq!(den.issue.as_deref(), Some("METAR has no visibility"));
+        assert_eq!(snapshot.airports["KDEN"].suggestion, None);
     }
 
     #[tokio::test]

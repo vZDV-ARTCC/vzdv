@@ -7,7 +7,30 @@ use crate::{
 };
 
 const NO_METAR: &str = "No METAR available";
+const NO_WIND: &str = "METAR has no wind";
+const NO_VISIBILITY: &str = "METAR has no visibility";
+const NO_SKY: &str = "METAR has no sky condition or cloud height";
 const NO_RULE: &str = "No rule matches the current weather";
+
+/// What a weather-based flow is chosen from.
+#[derive(Debug, Clone, Copy)]
+struct FlowWeather {
+    wind: (u16, u8, u8),
+    conditions: WeatherConditions,
+}
+
+/// The wind and flight rules from the METAR, or what's missing: the flow
+/// can't be estimated from incomplete weather.
+fn flow_weather(weather: Option<&AirportWeather>) -> Result<FlowWeather, &'static str> {
+    let weather = weather.ok_or(NO_METAR)?;
+    let wind = weather.wind.ok_or(NO_WIND)?;
+    let conditions = weather.conditions.ok_or(if weather.visibility.is_none() {
+        NO_VISIBILITY
+    } else {
+        NO_SKY
+    })?;
+    Ok(FlowWeather { wind, conditions })
+}
 
 /// The kind of ATIS a vATIS station broadcasts.
 #[derive(
@@ -166,14 +189,17 @@ impl CombinedProcedure {
                 None => resolved.issue(format!("ATIS preset '{}' is not configured", atis.preset)),
             }
         }
-        let Some(weather) = weather else {
-            resolved.issue(NO_METAR);
-            return resolved;
+        let weather = match flow_weather(weather) {
+            Ok(weather) => weather,
+            Err(issue) => {
+                resolved.issue(issue);
+                return resolved;
+            }
         };
-        if let Some(flow) = self.matched_flow(weather, current) {
+        if let Some(flow) = self.matched_flow(&weather, current) {
             return resolved.with_combined(flow, FlowSource::Matched);
         }
-        match find_matching_rule(&self.rules, weather)
+        match find_matching_rule(&self.rules, &weather)
             .and_then(|rule| self.flows.get(&rule.use_flow))
         {
             Some(flow) => resolved.with_combined(flow, FlowSource::Weather),
@@ -188,7 +214,7 @@ impl CombinedProcedure {
     /// flow, if the wind is light enough to match.
     fn matched_flow(
         &self,
-        weather: &AirportWeather,
+        weather: &FlowWeather,
         current: &HashMap<String, ResolvedFlow>,
     ) -> Option<&Flow> {
         let try_match = self.try_match.as_ref()?;
@@ -226,10 +252,8 @@ pub struct SplitProcedure {
 
 impl SplitProcedure {
     fn resolve(&self, icao: &str, weather: Option<&AirportWeather>, atis: &[Atis]) -> ResolvedFlow {
-        let rule = match weather {
-            Some(weather) => find_matching_split_rule(&self.rules, weather).ok_or(NO_RULE),
-            None => Err(NO_METAR),
-        };
+        let rule = flow_weather(weather)
+            .and_then(|weather| find_matching_split_rule(&self.rules, &weather).ok_or(NO_RULE));
         let mut resolved = ResolvedFlow::default();
         let dep = split_side(
             &mut resolved,
@@ -369,7 +393,7 @@ pub fn sorted_rwy_names(map: &HashMap<String, Vec<String>>) -> Vec<String> {
 }
 
 fn matches_wind_rule(
-    weather: &AirportWeather,
+    weather: &FlowWeather,
     calm: bool,
     conds: &[WeatherConditions],
     direction_bounds: &Option<WindDirectionBounds>,
@@ -401,7 +425,7 @@ fn matches_wind_rule(
     }
 }
 
-fn find_matching_rule<'a>(rules: &'a [FlowRule], weather: &AirportWeather) -> Option<&'a FlowRule> {
+fn find_matching_rule<'a>(rules: &'a [FlowRule], weather: &FlowWeather) -> Option<&'a FlowRule> {
     rules.iter().find(|rule| {
         matches_wind_rule(
             weather,
@@ -415,7 +439,7 @@ fn find_matching_rule<'a>(rules: &'a [FlowRule], weather: &AirportWeather) -> Op
 
 fn find_matching_split_rule<'a>(
     rules: &'a [SplitFlowRule],
-    weather: &AirportWeather,
+    weather: &FlowWeather,
 ) -> Option<&'a SplitFlowRule> {
     rules.iter().find(|rule| {
         matches_wind_rule(
@@ -507,12 +531,12 @@ mod tests {
 
     fn weather(name: &str, conditions: WeatherConditions, wind: (u16, u8, u8)) -> AirportWeather {
         AirportWeather {
-            ceiling: 0,
-            conditions,
+            ceiling: Some(crate::aviation::NO_CEILING),
+            conditions: Some(conditions),
             name: name.into(),
             raw: String::new(),
-            visibility: 10,
-            wind,
+            visibility: Some(10),
+            wind: Some(wind),
             altimeter: None,
         }
     }
@@ -647,6 +671,53 @@ mod tests {
             assert_eq!(flow.arr, None);
             assert_eq!(flow.issues, [NO_METAR]);
         }
+    }
+
+    /// Real METARs missing what a flow is chosen from.
+    #[test]
+    fn incomplete_weather_reports_what_is_missing() {
+        let config = load_config();
+        for (metar, issue) in [
+            ("KAPA 042211Z AUTO 10SM CLR 15/M04 A3070 RMK AO2", NO_WIND),
+            (
+                "KAPA 042215Z AUTO 27009KT CLR 29/03 A3028 RMK AO2 T02940034 PWINO",
+                NO_VISIBILITY,
+            ),
+            (
+                "KAPA 042215Z AUTO 27009KT 10SM 29/03 A3028 RMK AO2 PWINO",
+                NO_SKY,
+            ),
+            (
+                "KAPA 042215Z AUTO 27009KT 10SM BKN/// OVC045 29/03 A3028",
+                NO_SKY,
+            ),
+        ] {
+            let weather = crate::aviation::parse_metar(metar).unwrap();
+            for icao in ["KAPA", "KDEN"] {
+                let flow = resolve(&config, icao, Some(&weather), &[]);
+                assert_eq!(flow.dep, None, "{icao} {metar}");
+                assert_eq!(flow.arr, None, "{icao} {metar}");
+                assert_eq!(flow.issues, [issue], "{icao} {metar}");
+            }
+            // an online ATIS still sets the flow
+            let flow = resolve(
+                &config,
+                "KAPA",
+                Some(&weather),
+                &[atis("KAPA", AtisType::Combined, "NORTH VMC")],
+            );
+            assert_eq!(flow.dep_name(), Some("NORTH VMC"));
+            assert!(flow.issues.is_empty());
+        }
+
+        // a LIFR ceiling settles the flight rules without the visibility
+        let weather = crate::aviation::parse_metar(
+            "KAPA 070435Z AUTO 03007KT OVC003 M13/M15 A3013 RMK AO2 PWINO",
+        )
+        .unwrap();
+        let flow = resolve(&config, "KAPA", Some(&weather), &[]);
+        assert!(flow.dep.is_some());
+        assert!(flow.issues.is_empty());
     }
 
     #[test]
@@ -798,17 +869,18 @@ mod tests {
     fn rules_cover_all_weather() {
         let config = load_config();
         for (icao, procedure) in &config.0 {
-            let mut weather = weather(icao, WeatherConditions::VFR, (0, 0, 0));
             for conditions in [
                 WeatherConditions::VFR,
                 WeatherConditions::MVFR,
                 WeatherConditions::IFR,
                 WeatherConditions::LIFR,
             ] {
-                weather.conditions = conditions;
                 for kts in 0..100 {
                     for dir in 0..360 {
-                        weather.wind = (dir, kts, 0);
+                        let weather = FlowWeather {
+                            wind: (dir, kts, 0),
+                            conditions,
+                        };
                         let matched = match procedure {
                             AirportProcedure::Combined(proc) => {
                                 find_matching_rule(&proc.rules, &weather).is_some()

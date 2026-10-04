@@ -18,8 +18,10 @@
       <span class="badge rounded-pill text-bg-info">{{ airport.conditions }}</span>
     {% elif airport.conditions == 'IFR' %}
       <span class="badge rounded-pill text-bg-danger">{{ airport.conditions }}</span>
-    {% else %}
+    {% elif airport.conditions == 'LIFR' %}
       <span class="badge rounded-pill" style="background-color: purple;">{{ airport.conditions }}</span>
+    {% else %}
+      <span class="text-muted">Unknown</span>
     {% endif %}
   </span>
   <br>
