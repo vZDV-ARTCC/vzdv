@@ -595,12 +595,7 @@ fn event_csv(
     cic_positions: &[EventCicPositionDisplay],
     registrations: &[EventRegistrationDisplay],
 ) -> String {
-    let utc = |time: &DateTime<Utc>| time.format("%Y-%m-%d %H:%M").to_string();
-    let denver = |time: &DateTime<Utc>| {
-        time.with_timezone(&chrono_tz::America::Denver)
-            .format("%Y-%m-%d %H:%M %Z")
-            .to_string()
-    };
+    let zulu = |time: &DateTime<Utc>| time.format("%Y-%m-%d %H%Mz").to_string();
     let cic_name = |position: &EventCicPositionDisplay| format!("{} CIC", position.category);
     let category_order = |category: &str| {
         ["Enroute", "TRACON", "Local"]
@@ -612,10 +607,8 @@ fn event_csv(
     let mut rows: Vec<Vec<String>> = vec![
         vec!["Event".into(), event.name.clone()],
         vec!["Link".into(), link.to_string()],
-        vec!["Start (UTC)".into(), utc(&event.start)],
-        vec!["End (UTC)".into(), utc(&event.end)],
-        vec!["Start (Denver)".into(), denver(&event.start)],
-        vec!["End (Denver)".into(), denver(&event.end)],
+        vec!["Start".into(), zulu(&event.start)],
+        vec!["End".into(), zulu(&event.end)],
         vec![],
         vec!["Positions".into()],
         vec![
@@ -1767,7 +1760,6 @@ mod tests {
             event_registrations_extra(event_id, &positions_raw, &cic_positions, &db)
                 .await
                 .unwrap();
-        // spans the end of daylight saving time in Denver
         let event = Event {
             id: event_id,
             published: true,
@@ -1790,10 +1782,8 @@ mod tests {
             [
                 "\u{feff}Event,Test event",
                 "Link,https://example.com/events/1",
-                "Start (UTC),2026-10-31 23:00",
-                "End (UTC),2026-11-01 10:00",
-                "Start (Denver),2026-10-31 17:00 MDT",
-                "End (Denver),2026-11-01 03:00 MST",
+                "Start,2026-10-31 2300z",
+                "End,2026-11-01 1000z",
                 "",
                 "Positions",
                 "Category,Position,Controller,CID",
