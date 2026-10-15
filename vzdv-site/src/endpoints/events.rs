@@ -13,11 +13,11 @@ use crate::{
 use axum::{
     Form, Router,
     extract::{DefaultBodyLimit, Multipart, Path, State},
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use itertools::Itertools;
 use log::debug;
 use minijinja::context;
@@ -428,6 +428,8 @@ async fn event_registered_controllers(
 #[derive(Serialize)]
 struct EventRegistrationDisplay {
     controller: String,
+    name: String,
+    rating: String,
     cid: u32,
     choice_1: String,
     choice_2: String,
@@ -466,20 +468,27 @@ async fn event_registrations_extra(
             .bind(registration.cid)
             .fetch_optional(db)
             .await?;
-        let controller = match controller_db {
-            Some(ref c) => format!(
-                "{} {} ({}) - {}",
-                c.first_name,
-                c.last_name,
-                match c.operating_initials.as_ref() {
-                    Some(oi) => oi,
-                    None => "??",
-                },
+        let (name, rating) = match controller_db {
+            Some(ref c) => (
+                format!(
+                    "{} {} ({})",
+                    c.first_name,
+                    c.last_name,
+                    match c.operating_initials.as_ref() {
+                        Some(oi) => oi,
+                        None => "??",
+                    },
+                ),
                 ControllerRating::try_from(c.rating)
                     .map(|r| r.as_str())
-                    .unwrap_or(""),
+                    .unwrap_or("")
+                    .to_string(),
             ),
-            None => "???".to_string(),
+            None => ("???".to_string(), String::new()),
+        };
+        let controller = match controller_db {
+            Some(_) => format!("{name} - {rating}"),
+            None => name.clone(),
         };
         let notes = match registration.notes.as_ref() {
             Some(s) => s.clone(),
@@ -487,6 +496,8 @@ async fn event_registrations_extra(
         };
         ret.push(EventRegistrationDisplay {
             controller,
+            name,
+            rating,
             cid: controller_db.as_ref().map(|c| c.cid).unwrap_or_default(),
             choice_1: c_1.unwrap_or_default(),
             choice_2: c_2.unwrap_or_default(),
@@ -502,6 +513,201 @@ async fn event_registrations_extra(
     }
 
     Ok(ret)
+}
+
+/// Download the event's details, positions, and sign-ups as a CSV.
+///
+/// Event staff only.
+async fn get_event_export_csv(
+    State(state): State<Arc<AppState>>,
+    session: Session,
+    Path(id): Path<u32>,
+) -> Result<Response, AppError> {
+    let user_info: Option<UserInfo> = session.get(SESSION_USER_INFO_KEY).await?;
+    if let Some(redirect) = reject_if_not_in(&state, &user_info, PermissionsGroup::EventsTeam).await
+    {
+        return Ok(redirect.into_response());
+    }
+    let event: Option<Event> = sqlx::query_as(sql::GET_EVENT)
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?;
+    let event = match event {
+        Some(e) => e,
+        None => {
+            flashed_messages::push_flashed_message(
+                session,
+                flashed_messages::MessageLevel::Error,
+                "Event not found",
+            )
+            .await?;
+            return Ok(Redirect::to("/").into_response());
+        }
+    };
+
+    let positions_raw: Vec<EventPosition> = sqlx::query_as(sql::GET_EVENT_POSITIONS)
+        .bind(event.id)
+        .fetch_all(&state.db)
+        .await?;
+    let positions = event_positions_extra(&positions_raw, &state.db).await?;
+    let cic_positions = event_cic_positions_extra(event.id, &state.db).await?;
+    let registrations =
+        event_registrations_extra(event.id, &positions_raw, &cic_positions, &state.db).await?;
+    let link = format!(
+        "{}/events/{}",
+        state.config.hosted_domain.trim_end_matches('/'),
+        event.id
+    );
+    let csv = event_csv(&event, &link, &positions, &cic_positions, &registrations);
+
+    let slug = event
+        .name
+        .to_ascii_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .join("-");
+    let file_name = format!(
+        "{}-{}.csv",
+        if slug.is_empty() { "event" } else { &slug },
+        event.start.format("%Y-%m-%d")
+    );
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{file_name}\""),
+            ),
+        ],
+        csv,
+    )
+        .into_response())
+}
+
+/// Lay out an event as CSV for opening in a spreadsheet.
+///
+/// The event's details come first as label/value rows, followed by
+/// a table of its positions and a table of its sign-ups.
+fn event_csv(
+    event: &Event,
+    link: &str,
+    positions: &[EventPositionDisplay],
+    cic_positions: &[EventCicPositionDisplay],
+    registrations: &[EventRegistrationDisplay],
+) -> String {
+    let zulu = |time: &DateTime<Utc>| time.format("%Y-%m-%d %H%Mz").to_string();
+    let cic_name = |position: &EventCicPositionDisplay| format!("{} CIC", position.category);
+    let category_order = |category: &str| {
+        ["Enroute", "TRACON", "Local"]
+            .iter()
+            .position(|c| *c == category)
+            .unwrap_or(usize::MAX)
+    };
+
+    let mut rows: Vec<Vec<String>> = vec![
+        vec!["Event".into(), event.name.clone()],
+        vec!["Link".into(), link.to_string()],
+        vec!["Start".into(), zulu(&event.start)],
+        vec!["End".into(), zulu(&event.end)],
+        vec![],
+        vec!["Positions".into()],
+        vec![
+            "Category".into(),
+            "Position".into(),
+            "Controller".into(),
+            "CID".into(),
+        ],
+    ];
+    for position in cic_positions {
+        rows.push(vec![
+            "CIC".into(),
+            cic_name(position),
+            match position.cid {
+                Some(_) => position.controller.clone(),
+                None => String::new(),
+            },
+            position.cid.map(|cid| cid.to_string()).unwrap_or_default(),
+        ]);
+    }
+    for position in positions
+        .iter()
+        .sorted_by_key(|p| (category_order(&p.category), &p.name))
+    {
+        rows.push(vec![
+            position.category.clone(),
+            position.name.clone(),
+            match position.cid {
+                Some(_) => position.controller.clone(),
+                None => String::new(),
+            },
+            position.cid.map(|cid| cid.to_string()).unwrap_or_default(),
+        ]);
+    }
+
+    rows.push(vec![]);
+    rows.push(vec!["Sign-ups".into()]);
+    rows.push(
+        [
+            "Controller",
+            "CID",
+            "Rating",
+            "Choice 1",
+            "Choice 2",
+            "Choice 3",
+            "Notes",
+            "Assigned",
+        ]
+        .map(String::from)
+        .to_vec(),
+    );
+    for registration in registrations {
+        let assigned = cic_positions
+            .iter()
+            .filter(|p| p.cid == Some(registration.cid))
+            .map(cic_name)
+            .chain(
+                positions
+                    .iter()
+                    .filter(|p| p.cid == Some(registration.cid))
+                    .map(|p| p.name.clone()),
+            )
+            .join(", ");
+        rows.push(vec![
+            registration.name.clone(),
+            registration.cid.to_string(),
+            registration.rating.clone(),
+            registration.choice_1.clone(),
+            registration.choice_2.clone(),
+            registration.choice_3.clone(),
+            registration.notes.clone(),
+            assigned,
+        ]);
+    }
+
+    // the BOM gets Excel to read the file as UTF-8
+    let mut csv = String::from('\u{feff}');
+    for row in rows {
+        csv.push_str(&row.iter().map(|field| csv_field(field)).join(","));
+        csv.push_str("\r\n");
+    }
+    csv
+}
+
+/// Escape a value for a CSV field.
+///
+/// Names and notes are user-supplied, so anything a spreadsheet would
+/// treat as a formula is prefixed with `'` to keep it as plain text.
+fn csv_field(value: &str) -> String {
+    let value = if value.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        format!("'{value}")
+    } else {
+        value.to_string()
+    };
+    if value.contains([',', '"', '\r', '\n']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value
+    }
 }
 
 #[derive(Debug, Default)]
@@ -1308,6 +1514,7 @@ pub fn router() -> Router<Arc<AppState>> {
                 .post(post_edit_event_form)
                 .layer(DefaultBodyLimit::disable()), // no upload limit on this endpoint
         )
+        .route("/events/{id}/export.csv", get(get_event_export_csv))
         .route("/events/{id}/register", post(post_register_for_event))
         .route("/events/{id}/unregister", post(api_register_unregister))
         .route("/events/{id}/add_position", post(post_add_position))
@@ -1487,6 +1694,113 @@ mod tests {
         assert_eq!(
             event_cic_positions_extra(event_2, &db).await.unwrap().len(),
             3
+        );
+    }
+
+    #[test]
+    fn test_csv_field() {
+        assert_eq!(csv_field("DEN_APP"), "DEN_APP");
+        assert_eq!(csv_field(""), "");
+        assert_eq!(csv_field("late, maybe"), "\"late, maybe\"");
+        assert_eq!(csv_field("the \"big\" one"), "\"the \"\"big\"\" one\"");
+        assert_eq!(csv_field("line 1\nline 2"), "\"line 1\nline 2\"");
+        assert_eq!(csv_field("=HYPERLINK(\"x\")"), "\"'=HYPERLINK(\"\"x\"\")\"");
+        assert_eq!(csv_field("-1 hour"), "'-1 hour");
+        assert_eq!(csv_field("@here"), "'@here");
+    }
+
+    #[tokio::test]
+    async fn test_event_csv() {
+        let db = test_db().await;
+        let event_id = create_event(&db).await;
+        let mut position_ids = Vec::new();
+        for (name, category) in [
+            ("DEN_TWR", "Local"),
+            ("DEN_APP", "TRACON"),
+            ("DEN_CTR", "Enroute"),
+        ] {
+            let result = sqlx::query(sql::INSERT_EVENT_POSITION)
+                .bind(event_id)
+                .bind(name)
+                .bind(category)
+                .execute(&db)
+                .await
+                .unwrap();
+            position_ids.push(result.last_insert_rowid() as u32);
+        }
+        sqlx::query(sql::UPDATE_EVENT_POSITION_CONTROLLER)
+            .bind(position_ids[1])
+            .bind(1)
+            .execute(&db)
+            .await
+            .unwrap();
+        for (cid, notes) in [(1, "late, maybe"), (2, "")] {
+            sqlx::query(sql::UPSERT_EVENT_REGISTRATION)
+                .bind(event_id)
+                .bind(cid)
+                .bind(position_ids[1])
+                .bind(position_ids[2])
+                .bind(position_ids[0])
+                .bind(notes)
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+        let cic_id = event_cic_positions_extra(event_id, &db).await.unwrap()[0].id;
+        set_cic(&db, event_id, cic_id, Some(1)).await;
+
+        let positions_raw: Vec<EventPosition> = sqlx::query_as(sql::GET_EVENT_POSITIONS)
+            .bind(event_id)
+            .fetch_all(&db)
+            .await
+            .unwrap();
+        let positions = event_positions_extra(&positions_raw, &db).await.unwrap();
+        let cic_positions = event_cic_positions_extra(event_id, &db).await.unwrap();
+        let registrations =
+            event_registrations_extra(event_id, &positions_raw, &cic_positions, &db)
+                .await
+                .unwrap();
+        let event = Event {
+            id: event_id,
+            published: true,
+            name: "Test event".to_string(),
+            start: "2026-10-31T23:00:00Z".parse().unwrap(),
+            end: "2026-11-01T10:00:00Z".parse().unwrap(),
+            description: None,
+            image_url: None,
+        };
+
+        let csv = event_csv(
+            &event,
+            "https://example.com/events/1",
+            &positions,
+            &cic_positions,
+            &registrations,
+        );
+        assert_eq!(
+            csv,
+            [
+                "\u{feff}Event,Test event",
+                "Link,https://example.com/events/1",
+                "Start,2026-10-31 2300z",
+                "End,2026-11-01 1000z",
+                "",
+                "Positions",
+                "Category,Position,Controller,CID",
+                "CIC,Enroute CIC,First Last1 (??),1",
+                "CIC,TRACON CIC,,",
+                "CIC,CAB CIC,,",
+                "Enroute,DEN_CTR,,",
+                "TRACON,DEN_APP,First Last1 (??),1",
+                "Local,DEN_TWR,,",
+                "",
+                "Sign-ups",
+                "Controller,CID,Rating,Choice 1,Choice 2,Choice 3,Notes,Assigned",
+                "First Last1 (??),1,OBS,DEN_APP,DEN_CTR,DEN_TWR,\"late, maybe\",\"Enroute CIC, DEN_APP\"",
+                "First Last2 (??),2,OBS,DEN_APP,DEN_CTR,DEN_TWR,,",
+                "",
+            ]
+            .join("\r\n")
         );
     }
 }
