@@ -122,7 +122,7 @@ pub struct TransferChecklist {
     #[serde(rename = "override")]
     pub has_override: bool,
     pub is_first: u8,
-    pub days: u32,
+    pub days: Option<u32>,
     #[serde(rename = "visitingDays")]
     pub visiting_days: Option<u32>,
     #[serde(rename = "60days")]
@@ -452,4 +452,18 @@ pub async fn delete_solo_cert(cid: u32, position: &str, api_key: &str) -> Result
         return Err(VatusaError::Unknown(resp.status().as_u16(), "delete solo cert").into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::TransferChecklist;
+
+    #[test]
+    fn test_transfer_checklist_null_days() {
+        // response for a controller outside of VATUSA
+        let data = r#"{"homecontroller":false,"needbasic":true,"pending":true,"initial":false,"90days":true,"promo":true,"50hrs":true,"override":false,"is_first":0,"60days":true,"days":null,"visitingDays":100,"promoDays":null,"ratingHours":null,"hasHome":true,"hasRating":true,"instructor":true,"staff":true,"visiting":true,"overall":false}"#;
+        let checklist: TransferChecklist = serde_json::from_str(data).unwrap();
+        assert!(checklist.days.is_none());
+        assert!(checklist.visiting);
+    }
 }
