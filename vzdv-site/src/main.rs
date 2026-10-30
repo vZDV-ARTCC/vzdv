@@ -5,6 +5,8 @@
 #![deny(unsafe_code)]
 
 use axum::{Router, middleware as axum_middleware};
+use chrono::{Datelike, Days, NaiveDate, Utc, Weekday};
+use chrono_tz::America::Denver;
 use clap::Parser;
 use log::{debug, error, info, warn};
 use mini_moka::sync::Cache;
@@ -54,6 +56,28 @@ struct Cli {
     /// Port to run on
     #[arg(long, default_value_t = 3000)]
     port: u16,
+}
+
+/// The seasonal theme to show on a date, if any. Each theme is a
+/// stylesheet in `static/holiday/`, shown on its first and last days.
+fn holiday_on(date: NaiveDate) -> Option<&'static str> {
+    let year = date.year();
+    let day = |month, day| NaiveDate::from_ymd_opt(year, month, day).unwrap();
+    // the fourth Thursday of November
+    let thanksgiving = NaiveDate::from_weekday_of_month_opt(year, 11, Weekday::Thu, 4).unwrap();
+    [
+        ("halloween", day(10, 1), day(10, 31)),
+        // the Monday before through the Friday after
+        (
+            "thanksgiving",
+            thanksgiving - Days::new(3),
+            thanksgiving + Days::new(1),
+        ),
+        ("christmas", day(12, 1), day(12, 31)),
+    ]
+    .into_iter()
+    .find(|(_, first, last)| (*first..=*last).contains(&date))
+    .map(|(name, _, _)| name)
 }
 
 /// Load all template files into the binary via the stdlib `include_str!`
@@ -123,6 +147,9 @@ fn load_templates() -> Result<Environment<'static>, AppError> {
             .to_string()
     });
     env.add_filter("urlencode", |s: String| urlencoding::encode(&s).to_string());
+    env.add_function("active_holiday", || {
+        holiday_on(Utc::now().with_timezone(&Denver).date_naive())
+    });
 
     Ok(env)
 }
@@ -256,4 +283,34 @@ async fn main() {
         .await
         .expect("Could not serve the app");
     db.close().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::holiday_on;
+    use chrono::NaiveDate;
+
+    #[test]
+    fn test_holiday_on() {
+        let on = |year, month, day| holiday_on(NaiveDate::from_ymd_opt(year, month, day).unwrap());
+        assert_eq!(on(2026, 9, 30), None);
+        assert_eq!(on(2026, 10, 1), Some("halloween"));
+        assert_eq!(on(2026, 10, 31), Some("halloween"));
+        assert_eq!(on(2026, 11, 1), None);
+
+        // Thanksgiving 2026 is November 26th, and 2027 is November 25th
+        assert_eq!(on(2026, 11, 22), None);
+        assert_eq!(on(2026, 11, 23), Some("thanksgiving"));
+        assert_eq!(on(2026, 11, 27), Some("thanksgiving"));
+        assert_eq!(on(2026, 11, 28), None);
+        assert_eq!(on(2027, 11, 21), None);
+        assert_eq!(on(2027, 11, 22), Some("thanksgiving"));
+        assert_eq!(on(2027, 11, 26), Some("thanksgiving"));
+        assert_eq!(on(2027, 11, 27), None);
+
+        assert_eq!(on(2026, 11, 30), None);
+        assert_eq!(on(2026, 12, 1), Some("christmas"));
+        assert_eq!(on(2026, 12, 31), Some("christmas"));
+        assert_eq!(on(2027, 1, 1), None);
+    }
 }

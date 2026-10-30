@@ -20,6 +20,11 @@
     />
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico" />
     <link rel="stylesheet" href="/static/index.css">
+    {# the error page renders this layout without the site's functions #}
+    {% set holiday = active_holiday() if active_holiday is defined %}
+    {% if holiday %}
+      <link rel="stylesheet" href="/static/holiday/{{ holiday }}.css">
+    {% endif %}
     {% block extra_head %}{% endblock %}
     <title>{% block title %}vZDV{% endblock %}</title>
   </head>
